@@ -1,0 +1,30 @@
+# macOS Finder files
+.DS_Store
+**/.DS_Store
+
+# Python cache/build files
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+build/
+dist/
+*.egg-info/
+
+# Local virtual environments and editor files
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+
+# Private/local link lists
+My Links Txt/
+links.md
+
+# Generated output and scratch capture folders
+Output/
+here/
+
+# Keep README private until it is finalized
+README.md
