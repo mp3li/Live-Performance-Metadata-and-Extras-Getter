@@ -36,6 +36,12 @@ INIT_QUERY = (
     "countEvents=LIVE&menuTargetPlatform=MOBILE-WEB&readIconStore=ENABLED&"
     "readUserProfiles=true&altMenuTargetPlatform=WEB"
 )
+SECTION_QUERY = (
+    "bpp=10&rpp=12&displaySectionLinkBuckets=SHOW&displayEpgBuckets=HIDE&"
+    "displayEmptyBucketShortcuts=SHOW&displayContentAvailableOnSignIn=SHOW&"
+    "displayGeoblocked=HIDE&bspp=20&premiereEventContentDisplay=SHOW&"
+    "displayHeroLicences=SHOW"
+)
 
 
 @dataclass
@@ -77,7 +83,7 @@ def is_broadwayhd_url(url: str) -> bool:
 
 
 def is_supported_url(url: str) -> bool:
-    return bool(is_broadwayhd_url(url) and video_id_from_url(url))
+    return bool(is_broadwayhd_url(url) and (video_id_from_url(url) or section_id_from_url(url)))
 
 
 def extract_metadata(url: str, timeout: int = 25) -> BroadwayHDMetadata:
@@ -107,6 +113,21 @@ def extract_metadata(url: str, timeout: int = 25) -> BroadwayHDMetadata:
     if not metadata.title:
         metadata.title = f"BroadwayHD video {item_id}"
     return metadata
+
+
+def section_video_urls(url: str, timeout: int = 25) -> list[str]:
+    section_id = section_id_from_url(url)
+    if not section_id:
+        return []
+
+    session = fetch_session(timeout=timeout)
+    data = fetch_json(
+        f"{API_BASE}/api/v4/content/{section_id}?{SECTION_QUERY}",
+        headers=session.auth_headers,
+        timeout=timeout,
+    )
+    ids = section_video_ids(data)
+    return [f"https://broadwayhd.com/video/{item_id}" for item_id in ids]
 
 
 @dataclass
@@ -275,6 +296,55 @@ def video_id_from_url(url: str) -> str:
     parsed = urllib.parse.urlparse(clean_text(url))
     match = re.search(r"/video/(\d+)", parsed.path)
     return match.group(1) if match else ""
+
+
+def section_id_from_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(clean_text(url))
+    match = re.search(r"/section/([^/?#]+)", parsed.path)
+    if not match:
+        return ""
+    return urllib.parse.quote(urllib.parse.unquote(match.group(1)), safe="")
+
+
+def is_section_url(url: str) -> bool:
+    return bool(is_broadwayhd_url(url) and section_id_from_url(url))
+
+
+def section_video_ids(data: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+
+    for bucket in data.get("buckets") or []:
+        if not isinstance(bucket, dict):
+            continue
+        for item in bucket.get("contentList") or []:
+            add_vod_id(ids, item)
+
+    for hero in data.get("heroes") or []:
+        for item in vod_items(hero):
+            add_vod_id(ids, item)
+
+    return ids
+
+
+def vod_items(value: Any) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        if value.get("type") == "VOD" and value.get("id"):
+            output.append(value)
+        for item in value.values():
+            output.extend(vod_items(item))
+    elif isinstance(value, list):
+        for item in value:
+            output.extend(vod_items(item))
+    return output
+
+
+def add_vod_id(ids: list[str], item: Any) -> None:
+    if not isinstance(item, dict) or item.get("type") != "VOD":
+        return
+    item_id = clean_text(item.get("id"))
+    if item_id and item_id not in ids:
+        ids.append(item_id)
 
 
 def first_element_of_type(data: Any, type_name: str) -> dict[str, Any] | None:

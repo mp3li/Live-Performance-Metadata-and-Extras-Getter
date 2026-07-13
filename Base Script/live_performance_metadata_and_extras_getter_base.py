@@ -2417,6 +2417,8 @@ def scrape_url(url: str) -> Metadata:
     if provider == "metopera":
         return metadata_from_metopera(normalized, detail_link=url)
     if provider == "broadwayhd":
+        if broadwayhd.is_section_url(normalized):
+            raise ValueError("BroadwayHD section links contain multiple videos.")
         return metadata_from_broadwayhd(normalized, detail_link=url)
 
     html_text, final_url, warnings = fetch_html(normalized)
@@ -2430,6 +2432,17 @@ def provider_for_url(url: str) -> str:
         if matcher(url):
             return provider_key
     return ""
+
+
+def expand_input_link_to_urls(url: str) -> list[str]:
+    normalized = normalize_url(url)
+    if broadwayhd.is_section_url(normalized):
+        urls = broadwayhd.section_video_urls(normalized, timeout=HTTP_TIMEOUT_SECONDS)
+        if not urls:
+            raise ValueError("No BroadwayHD videos were found in this section.")
+        print(f"Found {len(urls)} BroadwayHD video link(s) in this section.")
+        return urls
+    return [url]
 
 
 def print_parsed_links(links: list[str]) -> None:
@@ -2571,13 +2584,88 @@ def scrape_links(links: list[str]) -> list[Metadata]:
     results: list[Metadata] = []
     for link in links:
         try:
-            print(f"\nChecking {link} ...")
-            results.append(scrape_url(link))
-        except UnsupportedProviderError:
-            print(UNSUPPORTED_PROVIDER_MESSAGE)
+            expanded_links = expand_input_link_to_urls(link)
         except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
             print(f"Could not scrape {link}: {error}")
+            continue
+
+        for expanded_link in expanded_links:
+            try:
+                print(f"\nChecking {expanded_link} ...")
+                results.append(scrape_url(expanded_link))
+            except UnsupportedProviderError:
+                print(UNSUPPORTED_PROVIDER_MESSAGE)
+            except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
+                print(f"Could not scrape {expanded_link}: {error}")
     return results
+
+
+def scrape_and_review_link(link: str, output_dir: Path) -> SaveResult | None:
+    try:
+        print(f"\nChecking {link} ...")
+        result = scrape_url(link)
+    except UnsupportedProviderError:
+        print(UNSUPPORTED_PROVIDER_MESSAGE)
+        return None
+    except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
+        print(f"Could not scrape {link}: {error}")
+        return None
+
+    print(format_preview(result))
+    if ask_yes_no("Save this title folder?", default=True):
+        save_result = save_title_folder(result, output_dir)
+        if save_result:
+            print_saved_result(save_result)
+        return save_result
+
+    title = result.title or "this title"
+    print(f"Skipped: {title}")
+    return None
+
+
+def expand_input_link_for_review(link: str) -> list[str]:
+    try:
+        return expand_input_link_to_urls(link)
+    except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
+        print(f"Could not scrape {link}: {error}")
+        return []
+
+
+def save_import_link(link: str, output_dir: Path, existing_links: set[str]) -> SaveResult | None:
+    if is_existing_output_link(link, existing_links):
+        print(f"\nSkipped existing link: {link}")
+        return None
+
+    try:
+        print(f"\nChecking {link} ...")
+        result = scrape_url(link)
+    except UnsupportedProviderError:
+        print(UNSUPPORTED_PROVIDER_MESSAGE)
+        return None
+    except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
+        print(f"Could not scrape {link}: {error}")
+        return None
+
+    expected_nfo_path = expected_nfo_path_for_metadata(output_dir, result)
+    if expected_nfo_path.exists():
+        print(f"Skipped existing folder: {expected_nfo_path.parent.name}")
+        return None
+
+    save_result = save_title_folder(result, output_dir)
+    if save_result:
+        print_saved_result(save_result)
+        existing_links.add(comparable_url(link))
+        if result.source_url:
+            existing_links.add(comparable_url(result.source_url))
+    return save_result
+
+
+def expand_import_entry(entry: LinkEntry) -> list[str]:
+    try:
+        return expand_input_link_to_urls(entry.url)
+    except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
+        print(f"Could not scrape {entry.url}: {error}")
+        return []
 
 
 def save_selected_results(results: list[Metadata], output_dir: Path) -> list[SaveResult]:
@@ -2615,25 +2703,10 @@ def review_one_at_a_time(links: list[str], output_dir: Path) -> int:
     save_results: list[SaveResult] = []
     print("\nOne-at-a-time review selected. Each result will be previewed before it can be saved.")
     for link in links:
-        try:
-            print(f"\nChecking {link} ...")
-            result = scrape_url(link)
-        except UnsupportedProviderError:
-            print(UNSUPPORTED_PROVIDER_MESSAGE)
-            continue
-        except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
-            print(f"Could not scrape {link}: {error}")
-            continue
-
-        print(format_preview(result))
-        if ask_yes_no("Save this title folder?", default=True):
-            save_result = save_title_folder(result, output_dir)
+        for expanded_link in expand_input_link_for_review(link):
+            save_result = scrape_and_review_link(expanded_link, output_dir)
             if save_result:
                 save_results.append(save_result)
-                print_saved_result(save_result)
-        else:
-            title = result.title or "this title"
-            print(f"Skipped: {title}")
 
     print(summarize_save_results(save_results, output_dir))
     return 0 if save_results else 1
@@ -2654,32 +2727,10 @@ def review_mylinks_file(output_dir: Path) -> int:
     existing_links = existing_output_links(output_dir)
 
     for entry in entries:
-        if is_existing_output_link(entry.url, existing_links):
-            print(f"\nSkipped existing link: {entry.url}")
-            continue
-
-        try:
-            print(f"\nChecking {entry.url} ...")
-            result = scrape_url(entry.url)
-        except UnsupportedProviderError:
-            print(UNSUPPORTED_PROVIDER_MESSAGE)
-            continue
-        except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
-            print(f"Could not scrape {entry.url}: {error}")
-            continue
-
-        expected_nfo_path = expected_nfo_path_for_metadata(output_dir, result)
-        if expected_nfo_path.exists():
-            print(f"Skipped existing folder: {expected_nfo_path.parent.name}")
-            continue
-
-        save_result = save_title_folder(result, output_dir)
-        if save_result:
-            save_results.append(save_result)
-            print_saved_result(save_result)
-            existing_links.add(comparable_url(entry.url))
-            if result.source_url:
-                existing_links.add(comparable_url(result.source_url))
+        for link in expand_import_entry(entry):
+            save_result = save_import_link(link, output_dir, existing_links)
+            if save_result:
+                save_results.append(save_result)
 
     print(summarize_save_results(save_results, output_dir))
     return 0 if save_results else 1
@@ -2694,23 +2745,10 @@ def review_links_until_done(output_dir: Path) -> int:
 
     while True:
         link = get_link_from_user()
-        try:
-            print(f"\nChecking {link} ...")
-            result = scrape_url(link)
-        except UnsupportedProviderError:
-            print(UNSUPPORTED_PROVIDER_MESSAGE)
-        except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
-            print(f"Could not scrape {link}: {error}")
-        else:
-            print(format_preview(result))
-            if ask_yes_no("Save this title folder?", default=True):
-                save_result = save_title_folder(result, output_dir)
-                if save_result:
-                    save_results.append(save_result)
-                    print_saved_result(save_result)
-            else:
-                title = result.title or "this title"
-                print(f"Skipped: {title}")
+        for expanded_link in expand_input_link_for_review(link):
+            save_result = scrape_and_review_link(expanded_link, output_dir)
+            if save_result:
+                save_results.append(save_result)
 
         if not ask_required_yes_no("Would you like to paste another link?"):
             break
