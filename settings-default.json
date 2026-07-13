@@ -1,4 +1,5 @@
 {
+  "_note": "To use this file, rename it to settings.json. These values match the tool's built-in defaults.",
   "output_dir": "Output",
   "downloads": {
     "images": true,
