@@ -21,6 +21,7 @@ env/
 # Private/local link lists
 My Links Txt/
 links.md
+settings.json
 
 # Generated output and scratch capture folders
 Output/

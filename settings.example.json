@@ -1,0 +1,21 @@
+{
+  "output_dir": "Output",
+  "downloads": {
+    "images": true,
+    "trailers": true,
+    "gallery_images": true,
+    "extra_videos": true,
+    "trailers_folder": "trailers",
+    "extras_folder": "extras",
+    "gallery_folder": "gallery",
+    "extra_videos_folder": "videos"
+  },
+  "media_matching": {
+    "enabled": false,
+    "media_roots": [],
+    "save_to_matched_media_folder": true,
+    "rename_matched_folders": false,
+    "match_threshold": 0.88,
+    "scan_subfolders": true
+  }
+}

@@ -10,8 +10,10 @@ downloaded as MP4 files when yt-dlp is installed.
 
 from __future__ import annotations
 
-import html
 import base64
+import copy
+import difflib
+import html
 import hashlib
 import importlib.util
 import io
@@ -28,6 +30,7 @@ import tempfile
 import threading
 import textwrap
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -36,7 +39,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_SCRIPTS_DIR = PROJECT_ROOT / "Provider Scripts"
@@ -83,6 +86,7 @@ TRAILER_CAPTURE_TIMEOUT_SECONDS = 30
 EXTERNAL_VIDEO_DOWNLOAD_TIMEOUT_SECONDS = 900
 MY_LINKS_DIR_NAME = "My Links Txt"
 MY_LINKS_FILE_NAME = "mylinks.txt"
+SETTINGS_FILE_NAME = "settings.json"
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -91,6 +95,43 @@ USER_AGENT = (
 )
 ACCEPT_HEADER = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 WIDE_ART_SUFFIXES = ("fanart", "banner", "landscape")
+VIDEO_FILE_EXTENSIONS = {
+    ".3gp",
+    ".avi",
+    ".flv",
+    ".m2ts",
+    ".m4v",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".mpeg",
+    ".mpg",
+    ".mts",
+    ".ts",
+    ".webm",
+    ".wmv",
+}
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "output_dir": "Output",
+    "downloads": {
+        "images": True,
+        "trailers": True,
+        "gallery_images": True,
+        "extra_videos": True,
+        "trailers_folder": "trailers",
+        "extras_folder": "extras",
+        "gallery_folder": "gallery",
+        "extra_videos_folder": "videos",
+    },
+    "media_matching": {
+        "enabled": False,
+        "media_roots": [],
+        "save_to_matched_media_folder": True,
+        "rename_matched_folders": False,
+        "match_threshold": 0.88,
+        "scan_subfolders": True,
+    },
+}
 SUPPORTED_PROVIDER_NAMES = tuple(name for _key, name, _matcher in PROVIDER_HANDLERS)
 BLOCK_TAGS = {
     "address",
@@ -368,6 +409,15 @@ class Metadata:
 class SaveResult:
     folder: Path
     items: list[Path]
+
+
+@dataclass
+class MediaMatch:
+    folder: Path
+    filename_base: str
+    matched_name: str
+    score: float
+    source: str
 
 
 @dataclass
@@ -1659,6 +1709,178 @@ def first_production_or_studio(meta: Metadata) -> str:
     return ""
 
 
+def output_target_for_metadata(
+    meta: Metadata,
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+    allow_folder_rename: bool = False,
+) -> tuple[Path, str, MediaMatch | None]:
+    filename_base = metadata_bundle_name(meta)
+    item_output_dir = output_folder_for_metadata(output_dir, meta)
+    settings = settings or DEFAULT_SETTINGS
+    match = find_media_match(meta, settings)
+    if not match or not settings_bool(
+        settings, "media_matching", "save_to_matched_media_folder", True
+    ):
+        return item_output_dir, filename_base, None
+
+    if allow_folder_rename:
+        match = maybe_rename_matched_media_folder(match, meta, settings)
+    return match.folder, match.filename_base, match
+
+
+def find_media_match(
+    meta: Metadata,
+    settings: dict[str, Any] | None = None,
+) -> MediaMatch | None:
+    settings = settings or DEFAULT_SETTINGS
+    if not settings_bool(settings, "media_matching", "enabled", False):
+        return None
+
+    roots = configured_media_roots(settings)
+    if not roots:
+        return None
+
+    targets = media_match_targets(meta)
+    if not targets:
+        return None
+
+    threshold = settings_float(settings, "media_matching", "match_threshold", 0.88)
+    recursive = settings_bool(settings, "media_matching", "scan_subfolders", True)
+    best_match: MediaMatch | None = None
+    for root in roots:
+        for candidate in iter_media_match_candidates(root, recursive):
+            match = media_match_for_candidate(candidate, targets)
+            if not match or match.score < threshold:
+                continue
+            if is_better_media_match(match, best_match):
+                best_match = match
+    return best_match
+
+
+def media_match_targets(meta: Metadata) -> list[str]:
+    values = [
+        meta.title,
+        meta.original_title,
+        metadata_bundle_name(meta),
+    ]
+    targets: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = normalize_media_match_text(value)
+        if normalized and normalized not in seen:
+            targets.append(normalized)
+            seen.add(normalized)
+    return targets
+
+
+def iter_media_match_candidates(root: Path, recursive: bool) -> Iterator[Path]:
+    if not root.exists():
+        return
+    if root.is_file():
+        if root.suffix.casefold() in VIDEO_FILE_EXTENSIONS:
+            yield root
+        return
+    if not root.is_dir():
+        return
+
+    yield root
+    iterator = root.rglob("*") if recursive else root.iterdir()
+    for path in iterator:
+        if should_skip_media_candidate(path):
+            continue
+        if path.is_dir() or path.suffix.casefold() in VIDEO_FILE_EXTENSIONS:
+            yield path
+
+
+def should_skip_media_candidate(path: Path) -> bool:
+    ignored_names = {"extras", "gallery", "trailers", "videos", "__pycache__"}
+    return path.name.startswith(".") or path.name.casefold() in ignored_names
+
+
+def media_match_for_candidate(path: Path, targets: list[str]) -> MediaMatch | None:
+    source = "file" if path.is_file() else "folder"
+    candidate_name = path.stem if path.is_file() else path.name
+    candidate = normalize_media_match_text(candidate_name)
+    if not candidate:
+        return None
+    score = max(media_match_score(candidate, target) for target in targets)
+    if score <= 0:
+        return None
+    return MediaMatch(
+        folder=path.parent if path.is_file() else path,
+        filename_base=path.stem if path.is_file() else path.name,
+        matched_name=candidate_name,
+        score=score,
+        source=source,
+    )
+
+
+def media_match_score(candidate: str, target: str) -> float:
+    if not candidate or not target:
+        return 0.0
+    if candidate == target:
+        return 1.0
+    ratio = difflib.SequenceMatcher(None, candidate, target).ratio()
+    if candidate in target or target in candidate:
+        length_ratio = min(len(candidate), len(target)) / max(len(candidate), len(target))
+        if length_ratio >= 0.65:
+            ratio = max(ratio, 0.93)
+    return ratio
+
+
+def is_better_media_match(match: MediaMatch, current: MediaMatch | None) -> bool:
+    if current is None:
+        return True
+    if match.score != current.score:
+        return match.score > current.score
+    source_priority = {"file": 2, "folder": 1}
+    return source_priority.get(match.source, 0) > source_priority.get(current.source, 0)
+
+
+def normalize_media_match_text(value: Any) -> str:
+    text = clean_text(value)
+    text = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", text)
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-zA-Z0-9]+", " ", text.casefold())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def maybe_rename_matched_media_folder(
+    match: MediaMatch,
+    meta: Metadata,
+    settings: dict[str, Any],
+) -> MediaMatch:
+    if not settings_bool(settings, "media_matching", "rename_matched_folders", False):
+        return match
+
+    desired_name = safe_filename(metadata_bundle_name(meta))
+    if not desired_name or match.folder.name == desired_name:
+        return match
+
+    target_folder = match.folder.parent / desired_name
+    if target_folder.exists():
+        meta.warnings.append(
+            f"Matched media folder was not renamed because {target_folder} already exists."
+        )
+        return match
+
+    try:
+        match.folder.rename(target_folder)
+    except OSError as error:
+        meta.warnings.append(f"Matched media folder could not be renamed: {error}")
+        return match
+
+    return MediaMatch(
+        folder=target_folder,
+        filename_base=match.filename_base,
+        matched_name=match.matched_name,
+        score=match.score,
+        source=match.source,
+    )
+
+
 def is_supported_trailer_url(url: str) -> bool:
     parsed = urllib.parse.urlparse(clean_text(url))
     if parsed.scheme not in {"http", "https"}:
@@ -1666,43 +1888,63 @@ def is_supported_trailer_url(url: str) -> bool:
     return parsed.path.casefold().endswith(".mp4")
 
 
-def download_assets_for_metadata(meta: Metadata, output_dir: Path, filename_base: str) -> list[Path]:
+def download_assets_for_metadata(
+    meta: Metadata,
+    output_dir: Path,
+    filename_base: str,
+    settings: dict[str, Any] | None = None,
+) -> list[Path]:
+    settings = settings or DEFAULT_SETTINGS
     saved_items: list[Path] = []
     base = safe_filename(filename_base)
-    poster_path = maybe_download_image_asset(
-        meta.poster_url, output_dir / f"{base}-poster", "cover art"
-    )
-    if poster_path:
-        meta.local_poster_path = poster_path.name
-        saved_items.append(poster_path)
+    if settings_bool(settings, "downloads", "images", True):
+        poster_path = maybe_download_image_asset(
+            meta.poster_url, output_dir / f"{base}-poster", "cover art"
+        )
+        if poster_path:
+            meta.local_poster_path = poster_path.name
+            saved_items.append(poster_path)
 
-    wide_art_paths = download_wide_image_variants(meta.fanart_url, output_dir, base)
-    if wide_art_paths:
-        meta.local_fanart_path = wide_art_paths[0].name
-        saved_items.extend(wide_art_paths)
+        wide_art_paths = download_wide_image_variants(meta.fanart_url, output_dir, base)
+        if wide_art_paths:
+            meta.local_fanart_path = wide_art_paths[0].name
+            saved_items.extend(wide_art_paths)
 
-    logo_path = maybe_download_image_asset(
-        meta.logo_url, output_dir / f"{base}-logo", "logo"
-    )
-    if logo_path:
-        meta.local_logo_path = logo_path.name
-        saved_items.append(logo_path)
+        logo_path = maybe_download_image_asset(
+            meta.logo_url, output_dir / f"{base}-logo", "logo"
+        )
+        if logo_path:
+            meta.local_logo_path = logo_path.name
+            saved_items.append(logo_path)
 
-    trailer_url = resolve_direct_trailer_url(meta)
-    if trailer_url:
-        meta.trailer_url = trailer_url
-        trailer_path = download_direct_trailer(trailer_url, output_dir / "trailers" / "trailer.mp4")
-        if trailer_path:
-            meta.local_trailer_path = trailer_path.relative_to(output_dir).as_posix()
-            saved_items.append(trailer_path)
-    saved_items.extend(download_extra_sections_for_metadata(meta, output_dir, base))
+    if settings_bool(settings, "downloads", "trailers", True):
+        trailer_url = resolve_direct_trailer_url(meta)
+        if trailer_url:
+            meta.trailer_url = trailer_url
+            trailers_folder = download_folder_setting(settings, "trailers_folder", "trailers")
+            trailer_path = download_direct_trailer(
+                trailer_url,
+                output_dir / trailers_folder / "trailer.mp4",
+            )
+            if trailer_path:
+                meta.local_trailer_path = trailer_path.relative_to(output_dir).as_posix()
+                saved_items.append(trailer_path)
+    saved_items.extend(download_extra_sections_for_metadata(meta, output_dir, base, settings))
     return saved_items
 
 
-def download_extra_sections_for_metadata(meta: Metadata, output_dir: Path, base: str) -> list[Path]:
+def download_extra_sections_for_metadata(
+    meta: Metadata,
+    output_dir: Path,
+    base: str,
+    settings: dict[str, Any] | None = None,
+) -> list[Path]:
+    settings = settings or DEFAULT_SETTINGS
     saved_items: list[Path] = []
-    if meta.gallery_urls:
-        gallery_dir = output_dir / "extras" / "gallery"
+    extras_folder = download_folder_setting(settings, "extras_folder", "extras")
+    if meta.gallery_urls and settings_bool(settings, "downloads", "gallery_images", True):
+        gallery_folder = download_folder_setting(settings, "gallery_folder", "gallery")
+        gallery_dir = output_dir / extras_folder / gallery_folder
         for index, url in enumerate(meta.gallery_urls, start=1):
             gallery_path = maybe_download_image_asset(
                 url,
@@ -1712,8 +1954,9 @@ def download_extra_sections_for_metadata(meta: Metadata, output_dir: Path, base:
             if gallery_path:
                 saved_items.append(gallery_path)
 
-    if meta.extra_videos:
-        video_dir = output_dir / "extras" / "videos"
+    if meta.extra_videos and settings_bool(settings, "downloads", "extra_videos", True):
+        extra_videos_folder = download_folder_setting(settings, "extra_videos_folder", "videos")
+        video_dir = output_dir / extras_folder / extra_videos_folder
         for index, video in enumerate(meta.extra_videos, start=1):
             if is_duplicate_trailer_extra_video(meta, video):
                 continue
@@ -2271,9 +2514,18 @@ def write_nfo(meta: Metadata, item_output_dir: Path, filename_base: str = "") ->
     return path
 
 
-def save_title_folder(meta: Metadata, output_dir: Path) -> SaveResult | None:
-    filename_base = metadata_bundle_name(meta)
-    item_output_dir = output_folder_for_metadata(output_dir, meta)
+def save_title_folder(
+    meta: Metadata,
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> SaveResult | None:
+    settings = settings or DEFAULT_SETTINGS
+    item_output_dir, filename_base, _match = output_target_for_metadata(
+        meta,
+        output_dir,
+        settings,
+        allow_folder_rename=True,
+    )
     item_output_dir.mkdir(parents=True, exist_ok=True)
     path = output_path_for_filename_base(item_output_dir, filename_base)
     if path.exists() and not ask_yes_no(
@@ -2282,7 +2534,7 @@ def save_title_folder(meta: Metadata, output_dir: Path) -> SaveResult | None:
         print(f"Skipped existing file: {path}")
         return None
     with AnimatedStatus("Creating your .nfo file and grabbing your trailer/images"):
-        items = download_assets_for_metadata(meta, item_output_dir, filename_base)
+        items = download_assets_for_metadata(meta, item_output_dir, filename_base, settings)
         nfo_path = write_nfo(meta, item_output_dir, filename_base)
     return SaveResult(folder=item_output_dir, items=[nfo_path, *items])
 
@@ -2489,6 +2741,117 @@ def project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def settings_path() -> Path:
+    return project_root() / SETTINGS_FILE_NAME
+
+
+def load_settings() -> dict[str, Any]:
+    path = settings_path()
+    settings = copy.deepcopy(DEFAULT_SETTINGS)
+    if not path.exists():
+        return settings
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{path} is not valid JSON: {error}") from error
+    except OSError as error:
+        raise ValueError(f"Could not read {path}: {error}") from error
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} must contain a JSON object.")
+    return merge_settings(settings, loaded)
+
+
+def merge_settings(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            merge_settings(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def configured_output_dir(settings: dict[str, Any]) -> Path:
+    return resolve_configured_path(settings.get("output_dir"), "Output")
+
+
+def resolve_configured_path(value: Any, default_relative_path: str) -> Path:
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        text = default_relative_path
+    path = Path(os.path.expanduser(text))
+    if not path.is_absolute():
+        path = project_root() / path
+    return path
+
+
+def settings_section(settings: dict[str, Any], name: str) -> dict[str, Any]:
+    value = settings.get(name)
+    if isinstance(value, dict):
+        return value
+    default_value = DEFAULT_SETTINGS.get(name)
+    return copy.deepcopy(default_value) if isinstance(default_value, dict) else {}
+
+
+def settings_bool(
+    settings: dict[str, Any],
+    section_name: str,
+    key: str,
+    default: bool,
+) -> bool:
+    section = settings_section(settings, section_name)
+    value = section.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().casefold()
+        if lowered in {"true", "yes", "y", "1", "on"}:
+            return True
+        if lowered in {"false", "no", "n", "0", "off"}:
+            return False
+    return default
+
+
+def settings_float(
+    settings: dict[str, Any],
+    section_name: str,
+    key: str,
+    default: float,
+) -> float:
+    section = settings_section(settings, section_name)
+    try:
+        value = float(section.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, value))
+
+
+def download_folder_setting(settings: dict[str, Any], key: str, default: str) -> str:
+    section = settings_section(settings, "downloads")
+    value = clean_text(section.get(key, default))
+    return safe_filename(value or default)
+
+
+def configured_media_roots(settings: dict[str, Any]) -> list[Path]:
+    section = settings_section(settings, "media_matching")
+    roots = section.get("media_roots", [])
+    if isinstance(roots, (str, Path)):
+        roots = [roots]
+    if not isinstance(roots, list):
+        return []
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for value in roots:
+        text = str(value).strip()
+        if not text:
+            continue
+        path = resolve_configured_path(text, "")
+        key = str(path)
+        if key not in seen:
+            paths.append(path)
+            seen.add(key)
+    return paths
+
+
 def load_mylinks_entries() -> list[LinkEntry]:
     path = mylinks_path()
     if not path.exists():
@@ -2534,9 +2897,12 @@ def comparable_url(value: str) -> str:
     return clean_text(value).rstrip("/")
 
 
-def existing_output_links(output_dir: Path) -> set[str]:
+def existing_output_links(
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> set[str]:
     links: set[str] = set()
-    for nfo_path in output_dir.glob("*/*.nfo"):
+    for nfo_path in iter_existing_nfo_paths(output_dir, settings):
         try:
             root = ET.parse(nfo_path).getroot()
         except (ET.ParseError, OSError):
@@ -2552,9 +2918,42 @@ def is_existing_output_link(url: str, existing_links: set[str]) -> bool:
     return comparable_url(url) in existing_links
 
 
-def expected_nfo_path_for_metadata(output_dir: Path, meta: Metadata) -> Path:
-    filename_base = metadata_bundle_name(meta)
-    return output_folder_for_metadata(output_dir, meta) / f"{safe_filename(filename_base)}.nfo"
+def iter_existing_nfo_paths(
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> Iterator[Path]:
+    checked_roots: set[str] = set()
+    for root in configured_existing_nfo_roots(output_dir, settings):
+        key = str(root)
+        if key in checked_roots or not root.exists():
+            continue
+        checked_roots.add(key)
+        yield from root.rglob("*.nfo")
+
+
+def configured_existing_nfo_roots(
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> list[Path]:
+    roots = [output_dir]
+    settings = settings or DEFAULT_SETTINGS
+    if settings_bool(settings, "media_matching", "enabled", False):
+        roots.extend(configured_media_roots(settings))
+    return roots
+
+
+def expected_nfo_path_for_metadata(
+    output_dir: Path,
+    meta: Metadata,
+    settings: dict[str, Any] | None = None,
+) -> Path:
+    item_output_dir, filename_base, _match = output_target_for_metadata(
+        meta,
+        output_dir,
+        settings,
+        allow_folder_rename=False,
+    )
+    return item_output_dir / f"{safe_filename(filename_base)}.nfo"
 
 
 def ask_required_yes_no(prompt: str) -> bool:
@@ -2570,10 +2969,26 @@ def ask_required_yes_no(prompt: str) -> bool:
 def summarize_save_results(save_results: list[SaveResult], output_dir: Path) -> str:
     folder_count = len({result.folder for result in save_results})
     item_count = sum(len(result.items) for result in save_results)
+    location = f" in {output_dir}" if all_folders_are_under_output(save_results, output_dir) else ""
     return (
         f"\nDone. Saved {folder_count} folder(s) with "
-        f"{item_count} item(s) total in {output_dir}."
+        f"{item_count} item(s) total{location}."
     )
+
+
+def all_folders_are_under_output(save_results: list[SaveResult], output_dir: Path) -> bool:
+    if not save_results:
+        return True
+    try:
+        output_root = output_dir.resolve()
+    except OSError:
+        output_root = output_dir
+    for result in save_results:
+        try:
+            result.folder.resolve().relative_to(output_root)
+        except (OSError, ValueError):
+            return False
+    return True
 
 
 def print_saved_result(result: SaveResult) -> None:
@@ -2600,7 +3015,11 @@ def scrape_links(links: list[str]) -> list[Metadata]:
     return results
 
 
-def scrape_and_review_link(link: str, output_dir: Path) -> SaveResult | None:
+def scrape_and_review_link(
+    link: str,
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> SaveResult | None:
     try:
         print(f"\nChecking {link} ...")
         result = scrape_url(link)
@@ -2613,7 +3032,7 @@ def scrape_and_review_link(link: str, output_dir: Path) -> SaveResult | None:
 
     print(format_preview(result))
     if ask_yes_no("Save this title folder?", default=True):
-        save_result = save_title_folder(result, output_dir)
+        save_result = save_title_folder(result, output_dir, settings)
         if save_result:
             print_saved_result(save_result)
         return save_result
@@ -2631,7 +3050,12 @@ def expand_input_link_for_review(link: str) -> list[str]:
         return []
 
 
-def save_import_link(link: str, output_dir: Path, existing_links: set[str]) -> SaveResult | None:
+def save_import_link(
+    link: str,
+    output_dir: Path,
+    existing_links: set[str],
+    settings: dict[str, Any] | None = None,
+) -> SaveResult | None:
     if is_existing_output_link(link, existing_links):
         print(f"\nSkipped existing link: {link}")
         return None
@@ -2646,12 +3070,12 @@ def save_import_link(link: str, output_dir: Path, existing_links: set[str]) -> S
         print(f"Could not scrape {link}: {error}")
         return None
 
-    expected_nfo_path = expected_nfo_path_for_metadata(output_dir, result)
+    expected_nfo_path = expected_nfo_path_for_metadata(output_dir, result, settings)
     if expected_nfo_path.exists():
         print(f"Skipped existing folder: {expected_nfo_path.parent.name}")
         return None
 
-    save_result = save_title_folder(result, output_dir)
+    save_result = save_title_folder(result, output_dir, settings)
     if save_result:
         print_saved_result(save_result)
         existing_links.add(comparable_url(link))
@@ -2668,12 +3092,16 @@ def expand_import_entry(entry: LinkEntry) -> list[str]:
         return []
 
 
-def save_selected_results(results: list[Metadata], output_dir: Path) -> list[SaveResult]:
+def save_selected_results(
+    results: list[Metadata],
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> list[SaveResult]:
     save_results: list[SaveResult] = []
     for result in results:
         title = result.title or "this title"
         if ask_yes_no(f"Save folder for {title}?", default=True):
-            save_result = save_title_folder(result, output_dir)
+            save_result = save_title_folder(result, output_dir, settings)
             if save_result:
                 save_results.append(save_result)
                 print_saved_result(save_result)
@@ -2682,7 +3110,11 @@ def save_selected_results(results: list[Metadata], output_dir: Path) -> list[Sav
     return save_results
 
 
-def review_all_at_once(links: list[str], output_dir: Path) -> int:
+def review_all_at_once(
+    links: list[str],
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> int:
     results = scrape_links(links)
     if not results:
         print("No metadata could be scraped.")
@@ -2694,17 +3126,21 @@ def review_all_at_once(links: list[str], output_dir: Path) -> int:
         print(format_preview(result))
 
     print("\nAll previews are complete. Now choose what to save.")
-    save_results = save_selected_results(results, output_dir)
+    save_results = save_selected_results(results, output_dir, settings)
     print(summarize_save_results(save_results, output_dir))
     return 0 if save_results else 1
 
 
-def review_one_at_a_time(links: list[str], output_dir: Path) -> int:
+def review_one_at_a_time(
+    links: list[str],
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> int:
     save_results: list[SaveResult] = []
     print("\nOne-at-a-time review selected. Each result will be previewed before it can be saved.")
     for link in links:
         for expanded_link in expand_input_link_for_review(link):
-            save_result = scrape_and_review_link(expanded_link, output_dir)
+            save_result = scrape_and_review_link(expanded_link, output_dir, settings)
             if save_result:
                 save_results.append(save_result)
 
@@ -2712,7 +3148,10 @@ def review_one_at_a_time(links: list[str], output_dir: Path) -> int:
     return 0 if save_results else 1
 
 
-def review_mylinks_file(output_dir: Path) -> int:
+def review_mylinks_file(
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> int:
     try:
         entries = load_mylinks_entries()
     except ValueError as error:
@@ -2724,11 +3163,11 @@ def review_mylinks_file(output_dir: Path) -> int:
         return 1
 
     save_results: list[SaveResult] = []
-    existing_links = existing_output_links(output_dir)
+    existing_links = existing_output_links(output_dir, settings)
 
     for entry in entries:
         for link in expand_import_entry(entry):
-            save_result = save_import_link(link, output_dir, existing_links)
+            save_result = save_import_link(link, output_dir, existing_links, settings)
             if save_result:
                 save_results.append(save_result)
 
@@ -2736,17 +3175,20 @@ def review_mylinks_file(output_dir: Path) -> int:
     return 0 if save_results else 1
 
 
-def review_links_until_done(output_dir: Path) -> int:
+def review_links_until_done(
+    output_dir: Path,
+    settings: dict[str, Any] | None = None,
+) -> int:
     save_results: list[SaveResult] = []
     print(f"\nOutput folder: {output_dir}")
 
     if choose_link_input_mode() == "1":
-        return review_mylinks_file(output_dir)
+        return review_mylinks_file(output_dir, settings)
 
     while True:
         link = get_link_from_user()
         for expanded_link in expand_input_link_for_review(link):
-            save_result = scrape_and_review_link(expanded_link, output_dir)
+            save_result = scrape_and_review_link(expanded_link, output_dir, settings)
             if save_result:
                 save_results.append(save_result)
 
@@ -2788,11 +3230,17 @@ def choose_review_mode(link_count: int) -> str:
 
 
 def main() -> int:
-    output_dir = project_root() / "Output"
+    try:
+        settings = load_settings()
+    except ValueError as error:
+        print(f"Could not load {SETTINGS_FILE_NAME}: {error}")
+        return 1
+
+    output_dir = configured_output_dir(settings)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(WELCOME_MESSAGE, end="")
-    return review_links_until_done(output_dir)
+    return review_links_until_done(output_dir, settings)
 
 
 if __name__ == "__main__":
