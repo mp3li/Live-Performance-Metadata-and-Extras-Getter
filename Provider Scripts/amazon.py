@@ -35,6 +35,7 @@ CONTENT_RATINGS = {
 
 NON_DETAIL_LINES = {
     "add another link",
+    "amazon.com",
     "clear",
     "creators and cast",
     "customers also watched",
@@ -99,7 +100,7 @@ def extract_metadata(
 
     lines = parse_lines(visible_text)
     metadata = AmazonMetadata()
-    metadata.title = find_title(lines) or find_html_title(html_text)
+    metadata.title = find_html_title(html_text) or find_title(lines)
     metadata.plot = find_plot(lines)
     metadata.tagline = find_tagline(lines)
     metadata.genres = find_genres(lines)
@@ -466,6 +467,8 @@ def is_non_detail_line(line: str) -> bool:
         text.startswith("explore the ")
         or text.startswith("get info ")
         or text.startswith("subscribe to ")
+        or re.search(r"\bemmys?®?\b", text, flags=re.IGNORECASE)
+        or re.search(r"\b\d+x\s+winner\b", text, flags=re.IGNORECASE)
     ):
         return True
     return False

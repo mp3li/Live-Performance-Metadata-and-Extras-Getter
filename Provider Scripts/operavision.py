@@ -103,6 +103,7 @@ class OperaVisionMetadata:
     production: str = ""
     title: str = ""
     composer: str = ""
+    folder_composer: str = ""
     tagline: str = ""
     overview: str = ""
     story: str = ""
@@ -148,9 +149,10 @@ def extract_metadata(
     metadata.plot = build_plot(metadata.overview, metadata.story)
 
     metadata.cast, metadata.crew = parse_cast_and_crew(lines)
-    metadata.composer = find_composer_from_html(html_text) or find_composer(
+    metadata.folder_composer = find_composer_from_html(html_text) or find_composer(
         lines, metadata.title
     )
+    metadata.composer = metadata.folder_composer
     if metadata.crew.get("Music"):
         metadata.composer = metadata.crew["Music"][0]
 

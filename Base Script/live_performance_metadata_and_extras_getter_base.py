@@ -64,12 +64,14 @@ amazon = load_provider_script("amazon")
 operavision = load_provider_script("operavision")
 metopera = load_provider_script("metopera")
 broadwayhd = load_provider_script("broadwayhd")
+netflix = load_provider_script("netflix")
 
 PROVIDER_HANDLERS = (
     ("amazon", amazon.NAME, amazon.is_amazon_url),
     ("operavision", operavision.NAME, operavision.is_operavision_url),
     ("metopera", metopera.NAME, metopera.is_supported_url),
     ("broadwayhd", broadwayhd.NAME, broadwayhd.is_supported_url),
+    ("netflix", netflix.NAME, netflix.is_supported_url),
 )
 
 
@@ -363,6 +365,7 @@ class Metadata:
     extra_fields: dict[str, list[str]] = field(default_factory=dict)
     gallery_urls: list[str] = field(default_factory=list)
     extra_videos: list[ExtraMedia] = field(default_factory=list)
+    folder_name_override: str = ""
     warnings: list[str] = field(default_factory=list)
 
     def set_once(self, field_name: str, value: Any) -> None:
@@ -638,6 +641,31 @@ def clean_final_metadata(meta: Metadata) -> None:
     meta.gallery_urls = [url for url in dedupe_text(meta.gallery_urls) if looks_like_image_url(url)]
 
 
+def validate_provider_metadata(meta: Metadata) -> None:
+    if not (
+        amazon.is_amazon_url(meta.source_url)
+        or amazon.is_amazon_url(meta.detail_link)
+    ):
+        return
+
+    title = clean_text(meta.title).casefold()
+    has_detail_metadata = any(
+        (
+            meta.plot,
+            meta.genres,
+            meta.studios,
+            meta.directors,
+            meta.actors,
+            meta.poster_url,
+            meta.fanart_url,
+        )
+    )
+    if title in {"amazon.com", "prime video", "amazon prime video"} and not has_detail_metadata:
+        raise ValueError(
+            "Amazon returned a generic page instead of Prime Video detail metadata. Please retry."
+        )
+
+
 def dedupe_text(values: list[str]) -> list[str]:
     output = []
     seen = set()
@@ -871,6 +899,7 @@ def parse_detail_page(html_text: str, source_url: str, detail_link: str = "") ->
         meta.year = extract_year(meta.date)
 
     clean_final_metadata(meta)
+    validate_provider_metadata(meta)
     meta.set_once("source_site", site_name_from_url(meta.source_url))
     detect_provider_ids(meta, source_url)
     return meta
@@ -957,6 +986,12 @@ def apply_operavision(meta: Metadata, html_text: str, visible_text: str) -> None
     if opera.composer:
         meta.add_values("credits", opera.composer)
         meta.add_extra("Composer", opera.composer)
+    meta.folder_name_override = operavision_bundle_name(
+        title=meta.title,
+        composer=opera.folder_composer or opera.composer,
+        production=opera.production,
+        year=meta.year,
+    )
     if opera.streamed_on:
         meta.add_extra("Streamed on", opera.streamed_on)
     if opera.available_until:
@@ -1110,6 +1145,36 @@ def metadata_from_broadwayhd(url: str, detail_link: str = "") -> Metadata:
         meta.add_extra("Producer", join_list(bway.producers))
     if bway.executive_producers:
         meta.add_extra("Executive Producer", join_list(bway.executive_producers))
+
+    clean_final_metadata(meta)
+    return meta
+
+
+def metadata_from_netflix(url: str, detail_link: str = "") -> Metadata:
+    nfx = netflix.extract_metadata(url, timeout=HTTP_TIMEOUT_SECONDS)
+    meta = Metadata(source_url=nfx.source_url or url, detail_link=detail_link or url)
+    meta.source_site = netflix.NAME
+    meta.title = nfx.title
+    meta.outline = nfx.plot
+    meta.plot = nfx.plot
+    meta.year = nfx.year
+    meta.content_rating = nfx.content_rating
+    meta.studios = [netflix.STUDIO_NAME]
+    meta.production_label = "Provider"
+    meta.poster_url = nfx.poster_url
+    meta.fanart_url = nfx.wide_url
+    meta.logo_url = nfx.logo_url
+    meta.trailer_url = nfx.trailer_url
+    meta.genres = nfx.genres
+    meta.tags = nfx.tags
+    meta.directors = nfx.directors
+    meta.actors = [Actor(name=name) for name in nfx.cast]
+
+    if nfx.item_id:
+        meta.add_unique_id("netflix", nfx.item_id)
+        meta.add_extra("Netflix Title ID", nfx.item_id)
+    if nfx.starring:
+        meta.add_extra("Starring", join_list(nfx.starring))
 
     clean_final_metadata(meta)
     return meta
@@ -1602,7 +1667,6 @@ def build_nfo_xml(meta: Metadata) -> str:
     add_text(root, "imdbrating", meta.imdb_rating)
     add_text(root, "amazonrating", meta.amazon_rating)
     add_text(root, "mpaa", meta.content_rating)
-    add_text(root, "customrating", meta.content_rating)
     add_text(root, "language", meta.language)
     add_text(root, "source_site", meta.source_site)
     add_text(root, "detail_link", meta.detail_link)
@@ -1683,6 +1747,7 @@ def safe_filename(name: str) -> str:
     cleaned = clean_text(name)
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    cleaned = cleaned.replace(" ⁄ ", "  ⁄  ")
     cleaned = cleaned[:120].strip(" .")
     return cleaned or "metadata"
 
@@ -1692,11 +1757,37 @@ def output_path_for_filename_base(output_dir: Path, filename_base: str) -> Path:
 
 
 def metadata_bundle_name(meta: Metadata) -> str:
+    if meta.folder_name_override:
+        return safe_filename(meta.folder_name_override)
     title = safe_filename(meta.title)
-    production_or_studio = safe_filename(first_production_or_studio(meta))
+    production_or_studio_value = first_production_or_studio(meta)
+    production_or_studio = (
+        safe_filename(production_or_studio_value) if production_or_studio_value else ""
+    )
     if production_or_studio:
         return safe_filename(f"{title} - {production_or_studio}")
     return title
+
+
+def operavision_bundle_name(
+    title: str,
+    composer: str,
+    production: str,
+    year: str | int,
+) -> str:
+    title = clean_text(title)
+    composer = clean_text(composer)
+    production = clean_text(production)
+    year = clean_text(year)
+
+    title_part = title
+    if composer:
+        title_part = f"{title_part}  ⁄  {composer}" if title_part else composer
+
+    production_part = " ".join(part for part in (production, year) if part)
+    if title_part and production_part:
+        return f"{title_part} - {production_part}"
+    return title_part or production_part
 
 
 def output_folder_for_metadata(output_dir: Path, meta: Metadata) -> Path:
@@ -2672,6 +2763,8 @@ def scrape_url(url: str) -> Metadata:
         if broadwayhd.is_section_url(normalized):
             raise ValueError("BroadwayHD section links contain multiple videos.")
         return metadata_from_broadwayhd(normalized, detail_link=url)
+    if provider == "netflix":
+        return metadata_from_netflix(normalized, detail_link=url)
 
     html_text, final_url, warnings = fetch_html(normalized)
     meta = parse_detail_page(html_text, final_url, detail_link=url)
@@ -2859,33 +2952,46 @@ def load_mylinks_entries() -> list[LinkEntry]:
 
     lines = path.read_text(encoding="utf-8").splitlines()
     entries: list[LinkEntry] = []
-    index = 0
-    while index < len(lines):
-        while index < len(lines) and not lines[index].strip():
-            index += 1
-        if index >= len(lines):
-            break
-
-        first_line = lines[index].strip()
-        index += 1
-        if is_http_url(first_line):
-            entries.append(LinkEntry(title="", url=first_line))
-        else:
-            title_line = first_line.rstrip(":").strip()
-            while index < len(lines) and not lines[index].strip():
-                index += 1
-            if index >= len(lines):
-                raise ValueError(f"{MY_LINKS_FILE_NAME} is missing a link after {first_line}")
-            link_line = lines[index].strip()
-            index += 1
-            if not is_http_url(link_line):
-                raise ValueError(f"{MY_LINKS_FILE_NAME} has an invalid link after {first_line}")
-            entries.append(LinkEntry(title=title_line, url=link_line))
-
-        while index < len(lines) and not lines[index].strip():
-            index += 1
-
+    block: list[str] = []
+    for line in lines:
+        if line.strip():
+            block.append(line.strip())
+            continue
+        add_mylinks_block_entries(block, entries)
+        block = []
+    add_mylinks_block_entries(block, entries)
     return entries
+
+
+def add_mylinks_block_entries(block: list[str], entries: list[LinkEntry]) -> None:
+    urls: list[str] = []
+    for line in block:
+        urls.extend(extract_urls_from_text(line))
+
+    if not urls:
+        return
+
+    for url in urls:
+        entries.append(LinkEntry(title="", url=url))
+
+
+def extract_urls_from_text(value: str) -> list[str]:
+    urls: list[str] = []
+    for match in re.finditer(r"https?://\S+", value):
+        url = clean_url_from_text(match.group(0))
+        if is_http_url(url):
+            urls.append(url)
+    return urls
+
+
+def clean_url_from_text(value: str) -> str:
+    url = clean_text(value).strip("<>")
+    url = url.rstrip(".,;")
+    while url.endswith(")") and url.count("(") < url.count(")"):
+        url = url[:-1]
+    while url.endswith("]") and url.count("[") < url.count("]"):
+        url = url[:-1]
+    return url
 
 
 def is_http_url(value: str) -> bool:
@@ -3056,7 +3162,13 @@ def save_import_link(
     existing_links: set[str],
     settings: dict[str, Any] | None = None,
 ) -> SaveResult | None:
-    if is_existing_output_link(link, existing_links):
+    media_matching_enabled = settings_bool(
+        settings or DEFAULT_SETTINGS,
+        "media_matching",
+        "enabled",
+        False,
+    )
+    if not media_matching_enabled and is_existing_output_link(link, existing_links):
         print(f"\nSkipped existing link: {link}")
         return None
 
@@ -3167,7 +3279,12 @@ def review_mylinks_file(
 
     for entry in entries:
         for link in expand_import_entry(entry):
-            save_result = save_import_link(link, output_dir, existing_links, settings)
+            save_result = save_import_link(
+                link,
+                output_dir,
+                existing_links,
+                settings,
+            )
             if save_result:
                 save_results.append(save_result)
 
