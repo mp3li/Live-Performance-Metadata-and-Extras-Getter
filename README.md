@@ -149,7 +149,9 @@ python3 "Launchers/live_performance_metadata_and_extras_getter.py" \
 Invalid or unsupported links, zero or multiple videos, and scrape failures
 return an error without changing the video. A generic downloader filename such
 as `master-...` may be renamed using LPMAEG's existing media naming behavior
-before matching sidecars are written.
+before matching sidecars are written. When that handoff rename occurs, matching
+Jellyfin subtitle sidecars are kept aligned with the final video name, for
+example `Once.en_us.srt` beside `Once.mkv`.
 
 ## How to Use the Tool
 

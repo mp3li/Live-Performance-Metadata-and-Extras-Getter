@@ -11,6 +11,7 @@ downloaded as MP4 files when yt-dlp is installed.
 from __future__ import annotations
 
 import base64
+import argparse
 import copy
 import difflib
 import html
@@ -2812,6 +2813,91 @@ def save_title_folder(
     return SaveResult(folder=item_output_dir, items=[nfo_path, *items])
 
 
+def handoff_existing_output_paths(folder: Path, filename_bases: list[str]) -> list[Path]:
+    found: list[Path] = []
+    for filename_base in {safe_filename(value) for value in filename_bases if value}:
+        candidates = [folder / f"{filename_base}.nfo"]
+        for suffix in ("poster", "fanart", "banner", "landscape", "logo"):
+            candidates.extend(folder.glob(f"{filename_base}-{suffix}.*"))
+        found.extend(path for path in candidates if path.exists())
+    return sorted(set(found), key=lambda path: path.name.casefold())
+
+
+def handoff_media_match(media_folder: Path) -> MediaMatch:
+    video_files = direct_video_files_in_folder(media_folder)
+    if not video_files:
+        raise ValueError(f"No video file was found directly in {media_folder}.")
+    if len(video_files) != 1:
+        raise ValueError(
+            f"Expected exactly one video file directly in {media_folder}, found {len(video_files)}."
+        )
+
+    video_file = video_files[0]
+    return MediaMatch(
+        folder=media_folder,
+        filename_base=video_file.stem,
+        matched_name=video_file.stem,
+        score=1.0,
+        source="handoff",
+    )
+
+
+def rename_handoff_subtitle_sidecars(
+    media_folder: Path,
+    previous_filename_base: str,
+    filename_base: str,
+) -> None:
+    if previous_filename_base == filename_base:
+        return
+
+    previous_prefix = f"{previous_filename_base}."
+    for source_path in media_folder.iterdir():
+        if (
+            not source_path.is_file()
+            or source_path.suffix.casefold() != ".srt"
+            or not source_path.name.startswith(previous_prefix)
+        ):
+            continue
+
+        target_path = media_folder / f"{filename_base}{source_path.name[len(previous_filename_base):]}"
+        if target_path.exists():
+            continue
+        source_path.rename(target_path)
+
+
+def save_handoff_metadata(
+    meta: Metadata,
+    media_folder: Path,
+    settings: dict[str, Any],
+) -> SaveResult | None:
+    match = handoff_media_match(media_folder)
+    desired_base = metadata_bundle_name(meta)
+    existing_paths = handoff_existing_output_paths(
+        media_folder,
+        [match.filename_base, desired_base],
+    )
+    if existing_paths:
+        print(f"LPMAEG note: Existing metadata or artwork found; skipped: {existing_paths[0].name}")
+        return None
+
+    previous_filename_base = match.filename_base
+    match = maybe_rename_matched_video_file(match, meta)
+    rename_handoff_subtitle_sidecars(
+        media_folder,
+        previous_filename_base,
+        match.filename_base,
+    )
+    naming = build_output_naming_plan(media_folder, match.filename_base, match, settings)
+    if handoff_existing_output_paths(media_folder, [match.filename_base]):
+        print(f"LPMAEG note: Existing metadata or artwork found; skipped: {naming.nfo_filename}")
+        return None
+
+    with AnimatedStatus("LPMAEG: Creating metadata and downloading available extras"):
+        items = download_assets_for_metadata(meta, media_folder, naming, settings)
+        nfo_path = write_nfo(meta, media_folder, naming.nfo_filename)
+    return SaveResult(folder=media_folder, items=[nfo_path, *items])
+
+
 def format_preview(meta: Metadata) -> str:
     rows = [
         ("Source Site", meta.source_site),
@@ -3529,12 +3615,67 @@ def choose_review_mode(link_count: int) -> str:
         print("Please type 1 or 2.")
 
 
-def main() -> int:
+def parse_command_line_arguments(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Live Performance Metadata and Extras Getter by mp3li"
+    )
+    parser.add_argument(
+        "--handoff",
+        action="store_true",
+        help="Run non-interactively after a completed downloader command.",
+    )
+    parser.add_argument("--detail-link", help="Supported public performance detail-page URL.")
+    parser.add_argument("--media-folder", help="Completed download folder containing one video.")
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip the handoff when matching metadata or artwork already exists.",
+    )
+    arguments = parser.parse_args(argv)
+    if arguments.handoff:
+        if not arguments.detail_link or not arguments.media_folder:
+            parser.error("--handoff requires --detail-link and --media-folder.")
+        if not arguments.skip_existing:
+            parser.error("--handoff requires --skip-existing for safe automatic use.")
+    elif arguments.detail_link or arguments.media_folder or arguments.skip_existing:
+        parser.error("--detail-link, --media-folder, and --skip-existing require --handoff.")
+    return arguments
+
+
+def run_handoff(detail_link: str, media_folder_value: str, settings: dict[str, Any]) -> int:
+    media_folder = Path(os.path.expanduser(media_folder_value)).resolve()
+    if not media_folder.is_dir():
+        print(f"LPMAEG error: Media folder does not exist: {media_folder}")
+        return 1
+
+    try:
+        handoff_media_match(media_folder)
+        meta = scrape_url(detail_link)
+        save_result = save_handoff_metadata(meta, media_folder, settings)
+    except UnsupportedProviderError:
+        print(UNSUPPORTED_PROVIDER_MESSAGE)
+        return 1
+    except (OSError, urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as error:
+        print(f"LPMAEG error: {error}")
+        return 1
+
+    if save_result is None:
+        print("mp3li note: Metadata and extras already exist; existing output was kept.")
+    else:
+        print(f"mp3li note: Complete. Metadata and extras are in {save_result.folder}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_command_line_arguments(argv)
     try:
         settings = load_settings()
     except ValueError as error:
         print(f"Could not load {SETTINGS_FILE_NAME}: {error}")
         return 1
+
+    if arguments.handoff:
+        return run_handoff(arguments.detail_link, arguments.media_folder, settings)
 
     output_dir = configured_output_dir(settings)
     output_dir.mkdir(parents=True, exist_ok=True)
