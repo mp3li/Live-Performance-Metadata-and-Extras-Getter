@@ -24,6 +24,7 @@
 - [About the Project](#about-the-project)
 - [What the Tool Does](#what-the-tool-does)
 - [Supported Providers](#supported-providers)
+- [Requirements](#requirements)
 - [How to Run](#how-to-run)
 - [How to Use the Tool](#how-to-use-the-tool)
 - [Importing mylinks.txt](#importing-mylinkstxt)
@@ -34,9 +35,9 @@
 - [Optional Dependency for Embedded Extra Videos](#optional-dependency-for-embedded-extra-videos)
 - [Platform Notes](#platform-notes)
 - [Known Limitations](#known-limitations)
-- [Disclaimers](#disclaimers)
 - [Project Structure](#project-structure)
 - [Documentation Map](#documentation-map)
+- [Responsible Use and Accommodation Disclaimer](#responsible-use-and-accommodation-disclaimer)
 
 </details>
 
@@ -83,6 +84,26 @@ Unsupported providers do not fall back to generic scraping. The tool prints:
 ```text
 Unfortunately this tool does not cover that provider at this time. Please make an Issue on Github for a Feature Request.
 ```
+
+## Requirements
+
+To run this tool as documented right now, you need:
+
+- **macOS**  
+  This tool is currently supported on macOS only.
+- **Python 3**  
+  The launcher is run with `python3`.
+- **Internet access**  
+  The tool fetches supported provider detail pages, metadata, images, and any available direct trailer or extras files.
+- **A supported provider link**  
+  The tool only works with providers that already have a provider script in this project.
+
+Optional but useful:
+
+- **`yt-dlp`**  
+  Needed only for some embedded extra videos where the provider page exposes the extra through an embedded player instead of a direct file URL.
+
+Windows and Linux support is planned, but they are not supported yet in the current documented release.
 
 ## How to Run
 
@@ -494,7 +515,9 @@ The project also currently contains macOS-oriented assumptions, including:
 - macOS-style Google Chrome app path usage for browser-assisted flows
 - macOS `curl` fallback behavior during some download steps
 
-Because of that, macOS is the platform the tool is currently documented and prepared for.
+Because of that, this tool is currently **macOS-only** in practice and in documentation.
+
+Windows and Linux support is planned, but it has not been implemented and tested for release yet.
 
 ## Known Limitations
 
@@ -504,14 +527,6 @@ Because of that, macOS is the platform the tool is currently documented and prep
 - The tool does not download DRM-protected trailers or other DRM-protected media.
 - Some provider pages expose incomplete metadata even when the visible page looks richer.
 - Media matching is intentionally careful. If the match is weak, the tool falls back to normal output instead of guessing aggressively.
-
-## Disclaimers
-
-This tool is provided for educational, research, and accessibility or accommodation support purposes only.
-
-It does not bypass DRM, does not obtain DRM-protected material, and does not access page information that requires a logged-in session when that information is not publicly visible to the tool.
-
-You are responsible for how you use this project, what material you process with it, and whether your use complies with the laws, licenses, and terms that apply to you. The author is not responsible for misuse.
 
 ## Project Structure
 
@@ -544,3 +559,11 @@ My Links Txt/
 - `Provider Scripts/` - provider-specific scraping logic
 - `Settings/settings-default.json` - tracked default settings
 - `My Links Txt/mylinks-default.txt` - tracked example import file
+
+## Responsible Use and Accommodation Disclaimer
+
+This tool is provided for educational, research, and accessibility or accommodation support purposes only.
+
+It does not bypass DRM, does not obtain DRM-protected material, and does not access page information that requires a logged-in session when that information is not publicly visible to the tool.
+
+You are responsible for how you use this project, what material you process with it, and whether your use complies with the laws, licenses, and terms that apply to you. The author is not responsible for misuse.
