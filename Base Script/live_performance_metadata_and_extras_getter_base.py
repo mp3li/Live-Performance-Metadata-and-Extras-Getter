@@ -88,6 +88,7 @@ TRAILER_CAPTURE_TIMEOUT_SECONDS = 30
 EXTERNAL_VIDEO_DOWNLOAD_TIMEOUT_SECONDS = 900
 MY_LINKS_DIR_NAME = "My Links Txt"
 MY_LINKS_FILE_NAME = "mylinks.txt"
+SETTINGS_DIR_NAME = "Settings"
 SETTINGS_FILE_NAME = "settings.json"
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -122,8 +123,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "extra_videos": True,
         "trailers_folder": "trailers",
         "extras_folder": "extras",
-        "gallery_folder": "gallery",
-        "extra_videos_folder": "videos",
+        "gallery_folder": "extrafanart",
+        "extra_videos_folder": "extras",
     },
     "media_matching": {
         "enabled": False,
@@ -421,6 +422,20 @@ class MediaMatch:
     matched_name: str
     score: float
     source: str
+
+
+@dataclass
+class OutputNamingPlan:
+    folder: Path
+    nfo_filename: str
+    poster_base: str
+    fanart_base: str
+    banner_base: str
+    landscape_base: str
+    logo_base: str
+    gallery_dir: Path
+    extra_videos_root: Path
+    trailer_dir: Path
 
 
 @dataclass
@@ -1116,6 +1131,7 @@ def metadata_from_broadwayhd(url: str, detail_link: str = "") -> Metadata:
     meta = Metadata(source_url=bway.source_url or url, detail_link=detail_link or url)
     meta.source_site = broadwayhd.NAME
     meta.title = bway.title
+    meta.folder_name_override = bway.title
     meta.plot = bway.plot
     meta.year = bway.year
     meta.runtime_minutes = bway.runtime_minutes
@@ -1817,6 +1833,7 @@ def output_target_for_metadata(
 
     if allow_folder_rename:
         match = maybe_rename_matched_media_folder(match, meta, settings)
+        match = maybe_rename_matched_video_file(match, meta)
     return match.folder, match.filename_base, match
 
 
@@ -1885,7 +1902,7 @@ def iter_media_match_candidates(root: Path, recursive: bool) -> Iterator[Path]:
 
 
 def should_skip_media_candidate(path: Path) -> bool:
-    ignored_names = {"extras", "gallery", "trailers", "videos", "__pycache__"}
+    ignored_names = {"extras", "gallery", "trailers", "videos", "extrafanart", "__pycache__"}
     return path.name.startswith(".") or path.name.casefold() in ignored_names
 
 
@@ -1972,6 +1989,139 @@ def maybe_rename_matched_media_folder(
     )
 
 
+def direct_video_files_in_folder(folder: Path) -> list[Path]:
+    if not folder.exists() or not folder.is_dir():
+        return []
+    files: list[Path] = []
+    try:
+        iterator = folder.iterdir()
+    except OSError:
+        return []
+    for path in iterator:
+        if path.name.startswith(".") or not path.is_file():
+            continue
+        if path.suffix.casefold() in VIDEO_FILE_EXTENSIONS:
+            files.append(path)
+    return sorted(files, key=lambda item: item.name.casefold())
+
+
+def is_generic_download_stem(stem: str) -> bool:
+    value = clean_text(stem)
+    if not value:
+        return False
+
+    patterns = (
+        r"^master-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+        r"(?:_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})?$",
+    )
+    return any(re.fullmatch(pattern, value, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def maybe_rename_matched_video_file(match: MediaMatch, meta: Metadata) -> MediaMatch:
+    video_files = direct_video_files_in_folder(match.folder)
+    if len(video_files) != 1:
+        return match
+
+    source_path = video_files[0]
+    existing_stem = clean_text(source_path.stem)
+    should_rename = meta.source_site == "OperaVision" or is_generic_download_stem(existing_stem)
+    if not should_rename:
+        return match
+
+    desired_stem = safe_filename(metadata_bundle_name(meta))
+    if not desired_stem:
+        return match
+
+    if existing_stem == desired_stem:
+        return match
+
+    suffix_text = ""
+    for pattern in (
+        r"(\s+\([^)]+\))$",
+        r"(\s+\[[^\]]+\])$",
+    ):
+        found = re.search(pattern, existing_stem)
+        if found:
+            suffix_text = found.group(1)
+            break
+
+    target_path = source_path.with_name(f"{desired_stem}{suffix_text}{source_path.suffix}")
+    if target_path == source_path or target_path.exists():
+        return match
+
+    try:
+        source_path.rename(target_path)
+    except OSError:
+        return match
+
+    return MediaMatch(
+        folder=match.folder,
+        filename_base=target_path.stem,
+        matched_name=target_path.stem,
+        score=match.score,
+        source="file",
+    )
+
+
+def common_version_base(video_files: list[Path]) -> str:
+    if len(video_files) < 2:
+        return ""
+    prefixes: list[str] = []
+    for path in video_files:
+        stem = clean_text(path.stem)
+        prefix, separator, _suffix = stem.partition(" - ")
+        if not separator or not prefix:
+            return ""
+        prefixes.append(prefix)
+    first = prefixes[0]
+    if all(prefix == first for prefix in prefixes[1:]):
+        return first
+    return ""
+
+
+def build_output_naming_plan(
+    item_output_dir: Path,
+    filename_base: str,
+    match: MediaMatch | None,
+    settings: dict[str, Any] | None = None,
+) -> OutputNamingPlan:
+    settings = settings or DEFAULT_SETTINGS
+    safe_base = safe_filename(filename_base)
+    trailers_folder = download_folder_setting(settings, "trailers_folder", "trailers")
+
+    if match:
+        video_files = direct_video_files_in_folder(item_output_dir)
+        if video_files:
+            real_base = safe_filename(video_files[0].stem)
+            return OutputNamingPlan(
+                folder=item_output_dir,
+                nfo_filename=f"{real_base}.nfo",
+                poster_base=f"{real_base}-poster",
+                fanart_base=f"{real_base}-fanart",
+                banner_base=f"{real_base}-banner",
+                landscape_base=f"{real_base}-landscape",
+                logo_base=f"{real_base}-logo",
+                gallery_dir=item_output_dir / "extrafanart",
+                extra_videos_root=item_output_dir,
+                trailer_dir=item_output_dir / trailers_folder,
+            )
+
+    extras_folder = download_folder_setting(settings, "extras_folder", "extras")
+    gallery_folder = download_folder_setting(settings, "gallery_folder", "extrafanart")
+    return OutputNamingPlan(
+        folder=item_output_dir,
+        nfo_filename=f"{safe_base}.nfo",
+        poster_base=f"{safe_base}-poster",
+        fanart_base=f"{safe_base}-fanart",
+        banner_base=f"{safe_base}-banner",
+        landscape_base=f"{safe_base}-landscape",
+        logo_base=f"{safe_base}-logo",
+        gallery_dir=item_output_dir / gallery_folder,
+        extra_videos_root=item_output_dir / extras_folder,
+        trailer_dir=item_output_dir / trailers_folder,
+    )
+
+
 def is_supported_trailer_url(url: str) -> bool:
     parsed = urllib.parse.urlparse(clean_text(url))
     if parsed.scheme not in {"http", "https"}:
@@ -1982,27 +2132,26 @@ def is_supported_trailer_url(url: str) -> bool:
 def download_assets_for_metadata(
     meta: Metadata,
     output_dir: Path,
-    filename_base: str,
+    naming: OutputNamingPlan,
     settings: dict[str, Any] | None = None,
 ) -> list[Path]:
     settings = settings or DEFAULT_SETTINGS
     saved_items: list[Path] = []
-    base = safe_filename(filename_base)
     if settings_bool(settings, "downloads", "images", True):
         poster_path = maybe_download_image_asset(
-            meta.poster_url, output_dir / f"{base}-poster", "cover art"
+            meta.poster_url, output_dir / naming.poster_base, "cover art"
         )
         if poster_path:
             meta.local_poster_path = poster_path.name
             saved_items.append(poster_path)
 
-        wide_art_paths = download_wide_image_variants(meta.fanart_url, output_dir, base)
+        wide_art_paths = download_wide_image_variants(meta.fanart_url, output_dir, naming)
         if wide_art_paths:
             meta.local_fanart_path = wide_art_paths[0].name
             saved_items.extend(wide_art_paths)
 
         logo_path = maybe_download_image_asset(
-            meta.logo_url, output_dir / f"{base}-logo", "logo"
+            meta.logo_url, output_dir / naming.logo_base, "logo"
         )
         if logo_path:
             meta.local_logo_path = logo_path.name
@@ -2012,47 +2161,42 @@ def download_assets_for_metadata(
         trailer_url = resolve_direct_trailer_url(meta)
         if trailer_url:
             meta.trailer_url = trailer_url
-            trailers_folder = download_folder_setting(settings, "trailers_folder", "trailers")
             trailer_path = download_direct_trailer(
                 trailer_url,
-                output_dir / trailers_folder / "trailer.mp4",
+                naming.trailer_dir / "trailer.mp4",
             )
             if trailer_path:
                 meta.local_trailer_path = trailer_path.relative_to(output_dir).as_posix()
                 saved_items.append(trailer_path)
-    saved_items.extend(download_extra_sections_for_metadata(meta, output_dir, base, settings))
+    saved_items.extend(download_extra_sections_for_metadata(meta, output_dir, naming, settings))
     return saved_items
 
 
 def download_extra_sections_for_metadata(
     meta: Metadata,
     output_dir: Path,
-    base: str,
+    naming: OutputNamingPlan,
     settings: dict[str, Any] | None = None,
 ) -> list[Path]:
     settings = settings or DEFAULT_SETTINGS
     saved_items: list[Path] = []
-    extras_folder = download_folder_setting(settings, "extras_folder", "extras")
     if meta.gallery_urls and settings_bool(settings, "downloads", "gallery_images", True):
-        gallery_folder = download_folder_setting(settings, "gallery_folder", "gallery")
-        gallery_dir = output_dir / extras_folder / gallery_folder
         for index, url in enumerate(meta.gallery_urls, start=1):
             gallery_path = maybe_download_image_asset(
                 url,
-                gallery_dir / f"{base}-gallery-{index:02d}",
+                naming.gallery_dir / f"fanart-{index:02d}",
                 f"gallery image {index}",
             )
             if gallery_path:
                 saved_items.append(gallery_path)
 
     if meta.extra_videos and settings_bool(settings, "downloads", "extra_videos", True):
-        extra_videos_folder = download_folder_setting(settings, "extra_videos_folder", "videos")
-        video_dir = output_dir / extras_folder / extra_videos_folder
         for index, video in enumerate(meta.extra_videos, start=1):
             if is_duplicate_trailer_extra_video(meta, video):
                 continue
             label = video.kind or f"video {index}"
-            video_base = safe_filename(video.title or f"{base}-video-{index:02d}")
+            video_base = safe_filename(video.title or f"extra-video-{index:02d}")
+            video_dir = naming.extra_videos_root / extra_video_folder_name(video, settings)
             external_url = video.external_url or video.page_url
             if external_url:
                 extra_path = download_external_video_as_mp4(
@@ -2080,6 +2224,36 @@ def download_extra_sections_for_metadata(
                     saved_items.append(extra_path)
                 continue
     return saved_items
+
+
+def extra_video_folder_name(video: ExtraMedia, settings: dict[str, Any]) -> str:
+    text = " ".join(
+        clean_text(value).casefold()
+        for value in (video.kind, video.title, video.description)
+        if clean_text(value)
+    )
+    if any(
+        token in text
+        for token in ("behind the scenes", "behind-the-scenes", "making of", "backstage")
+    ):
+        return "behind the scenes"
+    if "deleted" in text:
+        return "deleted scenes"
+    if "interview" in text or "q&a" in text or "q and a" in text:
+        return "interviews"
+    if "featurette" in text:
+        return "featurettes"
+    if "short" in text:
+        return "shorts"
+    if "clip" in text:
+        return "clips"
+    if "scene" in text:
+        return "scenes"
+    if "sample" in text:
+        return "samples"
+    if "trailer" in text:
+        return "trailers"
+    return download_folder_setting(settings, "extra_videos_folder", "extras")
 
 
 def is_duplicate_trailer_extra_video(meta: Metadata, video: ExtraMedia) -> bool:
@@ -2150,22 +2324,26 @@ def ytdlp_command() -> list[str]:
     return []
 
 
-def download_wide_image_variants(url: str, output_dir: Path, base: str) -> list[Path]:
+def download_wide_image_variants(
+    url: str,
+    output_dir: Path,
+    naming: OutputNamingPlan,
+) -> list[Path]:
     fanart_path = maybe_download_image_asset(
-        url, output_dir / f"{base}-fanart", "wide art/fanart"
+        url, output_dir / naming.fanart_base, "wide art/fanart"
     )
     if not fanart_path:
         return []
 
     saved_paths = [fanart_path]
-    for suffix in WIDE_ART_SUFFIXES[1:]:
-        variant_path = fanart_path.with_name(f"{base}-{suffix}{fanart_path.suffix}")
+    for variant_base in (naming.banner_base, naming.landscape_base):
+        variant_path = fanart_path.with_name(f"{variant_base}{fanart_path.suffix}")
         if variant_path.exists():
             saved_paths.append(variant_path)
             continue
         try:
             shutil.copyfile(fanart_path, variant_path)
-        except OSError as error:
+        except OSError:
             continue
         saved_paths.append(variant_path)
     return saved_paths
@@ -2600,7 +2778,10 @@ def download_url_to_file_with_curl(
 
 def write_nfo(meta: Metadata, item_output_dir: Path, filename_base: str = "") -> Path:
     item_output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_path_for_filename_base(item_output_dir, filename_base or meta.title)
+    if filename_base.endswith(".nfo"):
+        path = item_output_dir / safe_filename(filename_base)
+    else:
+        path = output_path_for_filename_base(item_output_dir, filename_base or meta.title)
     path.write_text(build_nfo_xml(meta), encoding="utf-8")
     return path
 
@@ -2611,22 +2792,23 @@ def save_title_folder(
     settings: dict[str, Any] | None = None,
 ) -> SaveResult | None:
     settings = settings or DEFAULT_SETTINGS
-    item_output_dir, filename_base, _match = output_target_for_metadata(
+    item_output_dir, filename_base, match = output_target_for_metadata(
         meta,
         output_dir,
         settings,
         allow_folder_rename=True,
     )
+    naming = build_output_naming_plan(item_output_dir, filename_base, match, settings)
     item_output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_path_for_filename_base(item_output_dir, filename_base)
+    path = item_output_dir / naming.nfo_filename
     if path.exists() and not ask_yes_no(
         f"{path.name} already exists in this title folder. Overwrite it?", default=False
     ):
         print(f"Skipped existing file: {path}")
         return None
     with AnimatedStatus("Creating your .nfo file and grabbing your trailer/images"):
-        items = download_assets_for_metadata(meta, item_output_dir, filename_base, settings)
-        nfo_path = write_nfo(meta, item_output_dir, filename_base)
+        items = download_assets_for_metadata(meta, item_output_dir, naming, settings)
+        nfo_path = write_nfo(meta, item_output_dir, naming.nfo_filename)
     return SaveResult(folder=item_output_dir, items=[nfo_path, *items])
 
 
@@ -2835,7 +3017,7 @@ def project_root() -> Path:
 
 
 def settings_path() -> Path:
-    return project_root() / SETTINGS_FILE_NAME
+    return project_root() / SETTINGS_DIR_NAME / SETTINGS_FILE_NAME
 
 
 def load_settings() -> dict[str, Any]:
@@ -3053,13 +3235,14 @@ def expected_nfo_path_for_metadata(
     meta: Metadata,
     settings: dict[str, Any] | None = None,
 ) -> Path:
-    item_output_dir, filename_base, _match = output_target_for_metadata(
+    item_output_dir, filename_base, match = output_target_for_metadata(
         meta,
         output_dir,
         settings,
         allow_folder_rename=False,
     )
-    return item_output_dir / f"{safe_filename(filename_base)}.nfo"
+    naming = build_output_naming_plan(item_output_dir, filename_base, match, settings)
+    return item_output_dir / naming.nfo_filename
 
 
 def ask_required_yes_no(prompt: str) -> bool:

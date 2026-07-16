@@ -18,10 +18,14 @@ env/
 .idea/
 .vscode/
 
-# Private/local link lists
-My Links Txt/
+# Private/local link lists and settings
+My Links Txt/*
+!My Links Txt/
+!My Links Txt/mylinks-default.txt
 links.md
-settings.json
+Settings/settings.json
+BroadwayHD Subtitle Getter by mp3li/
+totest.txt
 
 # Generated output and scratch capture folders
 Output/

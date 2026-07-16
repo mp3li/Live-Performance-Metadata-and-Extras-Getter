@@ -1,166 +1,419 @@
-# Live Performance Metadata and Extras Getter by mp3li
+<h1 align="center">Live Performance Metadata and Extras Getter by mp3li</h1>
 
-Live Performance Metadata and Extras Getter by mp3li is a command-line tool for turning supported public performance detail pages into Jellyfin-ready local metadata folders.
+<p align="center">
+  A macOS Python tool for turning supported public performance detail pages into local metadata folders that work cleanly with Jellyfin libraries.
+</p>
 
-It scrapes detail pages and saves title folders inside `Output`. Manual mode previews each result before saving; import mode reads `mylinks.txt` and saves every non-skipped entry automatically. The saved folder can include:
+<p align="center">
+  <img alt="Status" src="https://img.shields.io/badge/Status-In_Active_Development-118fe8?style=flat-square&labelColor=04040c" />
+  <img alt="Interface" src="https://img.shields.io/badge/Interface-Terminal-22c55e?style=flat-square&labelColor=04040c" />
+  <img alt="Metadata" src="https://img.shields.io/badge/Metadata-Jellyfin_Style_NFO-f97316?style=flat-square&labelColor=04040c" />
+  <img alt="Providers" src="https://img.shields.io/badge/Providers-Amazon_Prime_OperaVision_Metropolitan_Opera_BroadwayHD_%26_Netflix-8b5cf6?style=flat-square&labelColor=04040c" />
+  <img alt="Downloads" src="https://img.shields.io/badge/Downloads-Images%2C_Trailers%2C_Extras_%26_Metadata-ef4444?style=flat-square&labelColor=04040c" />
+  <img alt="Bulk Processing" src="https://img.shields.io/badge/Bulk_Processing-Optional-eab308?style=flat-square&labelColor=04040c" />
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-macOS_Tahoe-64748b?style=flat-square&labelColor=04040c" />
+</p>
 
-- a Jellyfin-style `.nfo` metadata file
-- poster art
-- wide artwork saved as `fanart`, `banner`, and `landscape`
-- production logo art when available
-- trailers saved under `trailers`
-- OperaVision gallery images saved under `extras/gallery`
-- OperaVision video-section extras saved under `extras/videos`
+## Table of Contents
 
-The tool is meant for supported provider detail pages, not arbitrary playable media URLs. You paste a page like an Amazon Prime Video detail page, an OperaVision performance page, a BroadwayHD video page, a Netflix title page, or a Metropolitan Opera Livestream broadcast page, review what was found, and then choose whether to save it.
+<details>
+<summary>Open Table of Contents</summary>
 
-## Run Command
+<br />
 
-Run the tool with:
+- [About the Project](#about-the-project)
+- [What the Tool Does](#what-the-tool-does)
+- [Supported Providers](#supported-providers)
+- [How to Run](#how-to-run)
+- [How to Use the Tool](#how-to-use-the-tool)
+- [Importing mylinks.txt](#importing-mylinkstxt)
+- [Settings](#settings)
+- [Media Matching](#media-matching)
+- [Output Structure and Jellyfin Naming](#output-structure-and-jellyfin-naming)
+- [Metadata Written to the NFO](#metadata-written-to-the-nfo)
+- [Optional Dependency for Embedded Extra Videos](#optional-dependency-for-embedded-extra-videos)
+- [Platform Notes](#platform-notes)
+- [Known Limitations](#known-limitations)
+- [Disclaimers](#disclaimers)
+- [Project Structure](#project-structure)
+- [Documentation Map](#documentation-map)
+
+</details>
+
+## About the Project
+
+Live Performance Metadata and Extras Getter by mp3li is a macOS Python tool for turning supported public performance detail pages into local metadata folders that work cleanly with Jellyfin libraries.
+
+The tool is built around a practical workflow:
+
+- paste a supported detail page link
+- scrape structured metadata with a provider-specific parser
+- preview the result in manual mode
+- save a `.nfo`, images, trailer, and extras into one title folder
+- optionally match an existing media folder and name saved files from the real video filename
+- optionally bulk process multiple links from `mylinks.txt`
+
+It is meant for supported provider detail pages, not direct playable stream URLs and not arbitrary websites.
+
+## What the Tool Does
+
+- Scrapes supported provider detail pages.
+- Builds Jellyfin-style `.nfo` metadata.
+- Saves the source site, pasted detail link, and fetched source URL into the `.nfo`.
+- Downloads poster art when available.
+- Downloads wide artwork and saves it as `fanart`, `banner`, and `landscape`.
+- Downloads logo art when available.
+- Downloads direct trailers when available.
+- Downloads supported gallery images and extra videos when available.
+- Can import multiple links from a text file or accept manual one-by-one link entry.
+- Can optionally match existing media folders and save files beside the real media.
+- Can rename a generic downloader video filename, such as `master-...`, before writing matching metadata and artwork files.
+
+## Supported Providers
+
+The provider scripts currently documented for this tool are:
+
+- Amazon Prime Video detail pages
+- OperaVision performance pages
+- BroadwayHD video pages
+- Netflix title pages
+
+Unsupported providers do not fall back to generic scraping. The tool prints:
+
+```text
+Unfortunately this tool does not cover that provider at this time. Please make an Issue on Github for a Feature Request.
+```
+
+## How to Run
+
+Run the launcher with:
 
 ```bash
 cd "/path/to/Live Performance Metadata and Extras Getter by mp3li"
-python3 live_performance_metadata_and_extras_getter.py
+python3 "Launchers/live_performance_metadata_and_extras_getter.py"
 ```
 
-The tool creates and uses this folder automatically:
+By default, the tool saves output into:
 
 ```text
 Output
 ```
 
-## Optional Dependency For Embedded Extra Videos
+## How to Use the Tool
 
-Direct `.mp4` trailers and direct `.mp4` extras can be downloaded with the Python standard library and macOS `curl`.
-
-Embedded extras, such as OperaVision YouTube embeds, need `yt-dlp` so they can be saved as real `.mp4` files instead of links. Install it with:
-
-```bash
-python3 -m pip install --user yt-dlp
-```
-
-The tool does not save `.strm` files.
-
-## How The Prompt Works
-
-When you start the tool, it prints the welcome text and asks:
+When the tool starts, it prints:
 
 ```text
+Welcome to Live Performance Metadata and Extras Getter by mp3li
+
+This tool scrapes publicly available detail pages from supported providers and turns them into Jellyfin-style .nfo metadata. It also downloads available trailers and images, names them with Jellyfin-friendly artwork filenames, and saves everything in the Output folder.
+
 Would you like to import your mylinks.txt or manually insert links here?
 1. Import your mylinks.txt
 2. Manually insert links here
 Choose 1 or 2:
 ```
 
-Choose `1` to import links from:
+### Manual mode
+
+Choose `2` to paste one supported detail page link at a time.
+
+Manual mode:
+
+- fetches the page
+- runs the matching provider parser
+- shows a preview before saving
+- asks whether to save the title folder
+- asks whether you want to paste another link
+
+The related prompts are:
+
+```text
+Paste your detail page link:
+Save this title folder? [Y/n]:
+Would you like to paste another link? [Y/N]:
+```
+
+When saving starts, the tool shows:
+
+```text
+Creating your .nfo file and grabbing your trailer/images
+```
+
+### Import mode
+
+Choose `1` to load links from:
 
 ```text
 My Links Txt/mylinks.txt
 ```
 
-Import mode processes the whole file automatically. It skips entries that already have Output folders and saves the rest without showing previews or asking one by one.
+Import mode processes the file automatically. It does not show one-by-one save prompts. It skips entries the tool detects as already handled and saves the rest.
 
-Choose `2` to paste links manually. Manual mode keeps the same link prompt:
+## Importing mylinks.txt
 
-```text
-Paste your detail page link:
-```
-
-Paste one detail-page URL and press Enter. For each manually pasted link, the tool will:
-
-1. fetch the detail page/provider data
-2. run the matching supported provider scraper
-3. show a preview of the title, dates, cast, studio/production, ratings, plot, artwork status, trailer status, gallery status, and extra-video status
-4. ask whether to save the title folder
-5. save the `.nfo`, images, trailer, and extras if you answer yes
-6. ask whether you want to paste another link
-
-After each link, it asks:
-
-```text
-Would you like to paste another link? [Y/N]:
-```
-
-Choose `Y` to paste another detail page. Choose `N` to finish.
-
-## Importing My Links Txt/mylinks.txt
-
-The import file must be named exactly:
+The real import file must be named exactly:
 
 ```text
 mylinks.txt
 ```
 
-and it must live in this folder:
+and it must live here:
 
 ```text
-My Links Txt
+My Links Txt/
 ```
 
-The simplest entry format is just a link:
+The repo includes a safe example file here:
 
 ```text
-https://example.com/detail-page
-
-https://example.com/next-detail-page
+My Links Txt/mylinks-default.txt
 ```
 
-You can also put an optional label above a link:
+To use it, remove `-default` from the filename.
 
-```text
-Title/Production:
-https://example.com/detail-page
+Rules:
 
-Any label you want, even a messy note
-https://example.com/next-detail-page
-```
-
-That means:
-
-- a link by itself is valid
-- an optional label line above a link is valid
-- the optional label can end with `:`, but it does not have to
+- links must start with `http://` or `https://`
+- optional text above a link is okay
+- blank text that is not a link will not be counted
 - blank lines between entries are fine
-- the link must start with `http://` or `https://`
-- labels are only human notes; the saved title and production are always scraped from the detail page itself
-
-Import mode skips entries that already have an Output folder. It checks existing `.nfo` source/detail links first, then also checks the computed title folder after scraping the page. Entries that are not skipped are saved automatically.
-
-## Manual Review Before Save
-
-In manual mode, nothing is saved until after the preview is shown and you answer yes to:
-
-```text
-Save this title folder? [Y/n]:
-```
-
-The preview shows found/not-found style statuses for images and videos instead of printing long media URLs. Image and trailer URLs are useful internally for downloading assets, but they are not written into the `.nfo`.
-
-## Output Folder Layout
-
-Each saved title gets its own folder inside `Output`.
-
-The folder name uses:
-
-```text
-Title - Studio
-```
-
-or:
-
-```text
-Title - Production
-```
-
-depending on what the page provides.
+- text above a link is only a note for you
+- the saved metadata still comes from the provider page itself
 
 Example:
 
 ```text
-Output/Shrek the Musical - Fox/
+The Nutcracker / OperaVision:
+https://example.com/operavision-detail-page
+
+Messy note text that is not the real title
+https://example.com/another-detail-page
 ```
 
-Inside that folder, the `.nfo` and local artwork use the same base filename:
+## Settings
+
+Tracked default settings live here:
+
+```text
+Settings/settings-default.json
+```
+
+To use your own live settings file:
+
+1. copy or rename `settings-default.json`
+2. make it `settings.json`
+3. keep it in the same `Settings` folder
+
+The real local `Settings/settings.json` is gitignored.
+
+### `output_dir`
+
+This tells the tool where to put saved folders when it is not saving beside matched media.
+
+Default:
+
+```json
+"output_dir": "Output"
+```
+
+### `downloads`
+
+This group controls what kinds of files the tool tries to save.
+
+#### `images`
+
+Turns poster, wide artwork, and logo downloading on or off.
+
+Options:
+
+- `true` = download available images
+- `false` = do not download images
+
+#### `trailers`
+
+Turns trailer downloading on or off.
+
+Options:
+
+- `true` = download available trailers
+- `false` = do not download trailers
+
+#### `gallery_images`
+
+Turns gallery image downloading on or off.
+
+Options:
+
+- `true` = download gallery images when a provider page offers them
+- `false` = skip gallery images
+
+#### `extra_videos`
+
+Turns extra video downloading on or off.
+
+Options:
+
+- `true` = download extra videos when possible
+- `false` = skip extra videos
+
+#### `trailers_folder`
+
+This is the folder name used for trailers inside each saved title folder.
+
+Default:
+
+```json
+"trailers_folder": "trailers"
+```
+
+#### `extras_folder`
+
+This is the main folder name used for extra downloaded items such as extra videos.
+
+Default:
+
+```json
+"extras_folder": "extras"
+```
+
+#### `gallery_folder`
+
+This is the folder name used for gallery images.
+
+Default:
+
+```json
+"gallery_folder": "extrafanart"
+```
+
+#### `extra_videos_folder`
+
+This is the fallback folder name used for extra videos when the tool does not sort them into a more specific folder such as `interviews` or `behind the scenes`.
+
+Default:
+
+```json
+"extra_videos_folder": "extras"
+```
+
+### `media_matching`
+
+This group controls whether the tool tries to find your real media folders and place files beside them.
+
+#### `enabled`
+
+Turns media matching on or off.
+
+Options:
+
+- `true` = search your chosen media roots for matching folders or files
+- `false` = save normally into the general output folder
+
+Default:
+
+```json
+"enabled": false
+```
+
+#### `media_roots`
+
+This is the list of folders the tool is allowed to search when media matching is enabled.
+
+Example:
+
+```json
+"media_roots": [
+  "/Volumes/DriveName/Movies",
+  "/Users/you/Media"
+]
+```
+
+#### `save_to_matched_media_folder`
+
+Tells the tool whether it should actually save into the matched media folder after finding it.
+
+Options:
+
+- `true` = save into the matched media folder
+- `false` = only use matching for detection logic, then still save to the normal output folder
+
+#### `rename_matched_folders`
+
+Tells the tool whether it is allowed to rename matched media folders when the naming rules call for it.
+
+Options:
+
+- `true` = allow folder renaming
+- `false` = do not rename matched folders
+
+#### `match_threshold`
+
+This controls how close a folder name or filename has to be before the tool treats it as a match.
+
+Lower values are looser. Higher values are stricter.
+
+Default:
+
+```json
+"match_threshold": 0.88
+```
+
+#### `scan_subfolders`
+
+Controls whether the tool searches only the top level of your media roots or also searches deeper folders inside them.
+
+Options:
+
+- `true` = search inside subfolders
+- `false` = only search the top level
+
+## Media Matching
+
+Media matching is the feature that lets the tool place metadata files, artwork files, trailers, and extras beside your actual video files instead of only saving into the general `Output` folder.
+
+By default, this feature is off:
+
+```json
+"enabled": false
+```
+
+When it is off:
+
+- the tool saves into `Output`
+- folder names are based on the scraped metadata bundle name
+
+When it is on:
+
+- the tool searches the folders listed in `media_roots`
+- if it finds a strong enough match, it can save directly into that real media folder
+- if it does not find a match, it falls back to the normal output folder
+
+This is useful because Jellyfin expects metadata files and artwork files to match the real media filename when you want those local files to be picked up automatically. This tool uses the video filename on purpose so the saved files stay directly usable and easier to keep organized.
+
+## Output Structure and Jellyfin Naming
+
+If there is no matched media folder, the tool saves into `Output/<title folder>`.
+
+If media matching is enabled and a matching folder is found, the tool can save beside the real media instead.
+
+### When saving into a matched media folder
+
+The real video filename becomes the naming anchor.
+
+That means:
+
+- the `.nfo` filename matches the video filename
+- poster, fanart, banner, landscape, and logo filenames match the video filename
+- trailers go in the configured trailers folder
+- gallery images go in `extrafanart`
+- extra videos go in `extras` or a more specific extras subfolder
+
+### When saving into Output
+
+The tool uses the computed title bundle name for the folder and saved files.
+
+Examples:
 
 ```text
 Output/Shrek the Musical - Fox/Shrek the Musical - Fox.nfo
@@ -171,51 +424,35 @@ Output/Shrek the Musical - Fox/Shrek the Musical - Fox-landscape.jpg
 Output/Shrek the Musical - Fox/trailers/trailer.mp4
 ```
 
-OperaVision pages can also include production logos, galleries, and video extras:
+OperaVision uses the more specific bundle naming the tool was configured to produce, for example:
 
 ```text
-Output/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025.nfo
-Output/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025-logo.png
-Output/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025/extras/gallery/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025-gallery-01.jpg
-Output/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025/extras/videos/Sneek Peek at The Nutcracker.mp4
-Output/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025/extras/videos/Behind the scenes of The Nutcracker.mp4
+Forest Song  ⁄  Skorulskyi - Dnipro Academic Opera and Ballet Theatre 2025
 ```
 
-## Jellyfin Naming Notes
+### Extras layout
 
-The tool uses Jellyfin-friendly local metadata names:
+- gallery images go in `extrafanart`
+- extra videos go in `extras`
+- extra video groups may be split into folders such as:
+  - `interviews`
+  - `clips`
+  - `featurettes`
+  - `behind the scenes`
+  - `deleted scenes`
+  - `trailers`
 
-- `.nfo` file: saved beside the title assets using the folder/title base name
-- poster: `Title - Studio-poster.jpg`
-- fanart: `Title - Studio-fanart.jpg`
-- banner: `Title - Studio-banner.jpg`
-- landscape: `Title - Studio-landscape.jpg`
-- logo: `Title - Studio-logo.png`
-- trailer: `trailers/trailer.mp4`
-- gallery extras: `extras/gallery/...`
-- video extras: `extras/videos/...`
+## Metadata Written to the NFO
 
-The extras folders use lowercase names because Jellyfin documents folder names like `extras` and `trailers` in lowercase.
-
-OperaVision output uses a more specific bundle name when the page exposes the right fields:
-
-- `Title  ⁄  Composer - Production Year`
-
-Other providers keep the normal `Title - Studio` or `Title - Production` folder naming.
-
-## Metadata Written To The NFO
-
-The generated `.nfo` uses a `<movie>` root, which Jellyfin can read for standalone movie or music-video-style library items.
-
-The tool writes known fields such as:
+The generated `.nfo` uses a `<movie>` root and writes fields such as:
 
 - title
 - original title
 - sort title
-- plot/overview
+- plot / overview
 - tagline
 - year
-- premiered/aired/release date
+- premiered / aired / release date
 - runtime
 - ratings
 - content rating
@@ -223,268 +460,87 @@ The tool writes known fields such as:
 - genres
 - tags
 - countries
-- studios/production
+- studios / production
 - directors
 - writers
-- credits/producers/composers
-- cast with roles when available
+- credits / producers / composers
+- cast, with roles when available
 - source site
-- detail link you pasted
-- fetched/canonical source URL
+- pasted detail link
+- fetched / canonical source URL
 
-Additional scraped fields that do not map cleanly to a standard tag are preserved inside XML comments in the `.nfo`.
+Additional non-standard scraped fields are preserved in XML comments so they are not silently lost.
 
-## Source Tracking
+## Optional Dependency for Embedded Extra Videos
 
-Each `.nfo` keeps track of where the metadata came from:
+If a detail page includes embedded videos such as behind-the-scenes features, interview clips, or similar extras, the tool may need `yt-dlp` to turn those embedded pages into real local `.mp4` files.
 
-```xml
-<source_site>...</source_site>
-<detail_link>...</detail_link>
-<source_url>...</source_url>
-```
+It is not needed if you only want `.nfo` files, text metadata, and image downloads.
 
-This makes it easier to trace a saved folder back to the exact page you pasted.
-
-## Code Layout
-
-The root script is only a launcher:
-
-```text
-live_performance_metadata_and_extras_getter.py
-```
-
-The main code lives in:
-
-```text
-Base Script/live_performance_metadata_and_extras_getter_base.py
-```
-
-Provider-specific code lives in:
-
-```text
-Provider Scripts/
-```
-
-The tool only accepts links for providers that have a provider script in that folder.
-
-If you paste a link for a provider that is not supported yet, the tool prints:
-
-```text
-Unfortunately this tool does not cover that provider at this time. Please make an Issue on Github for a Feature Request.
-```
-
-## Supported Site-Specific Scrapers
-
-### Amazon Prime Video
-
-Amazon pages are handled by:
-
-```text
-Provider Scripts/amazon.py
-```
-
-The Amazon helper looks for:
-
-- title
-- year
-- runtime
-- content rating
-- studio
-- genres
-- directors
-- producers
-- cast
-- Amazon rating
-- IMDb rating
-- plot/description
-- cover art
-- wide art
-- trailer target metadata when exposed by the page
-
-Some Amazon detail pages expose different HTML depending on the provider, such as BroadwayHD or Marquee TV. The Amazon helper has specific logic for those detail-page layouts.
-
-### OperaVision
-
-OperaVision pages are handled by:
-
-```text
-Provider Scripts/operavision.py
-```
-
-The OperaVision helper looks for:
-
-- production/company
-- title
-- composer
-- streamed date
-- available-until date
-- recorded date
-- tagline
-- overview
-- story section
-- cast roles
-- creative credits
-- production logo
-- poster/header image
-- wide image
-- gallery images
-- on-page video cards
-- direct autoplay trailer/background MP4
-
-OperaVision video cards are counted from the page's `Videos` section. If the cards are YouTube embeds, the tool uses `yt-dlp` to download each one as an `.mp4` file into `extras/videos`.
-
-### BroadwayHD
-
-BroadwayHD pages are handled by:
-
-```text
-Provider Scripts/broadwayhd.py
-```
-
-Supported links look like:
-
-```text
-https://broadwayhd.com/video/897550?showInterstitial=true
-```
-
-The BroadwayHD helper reads the public app data used by the page and looks for:
-
-- title
-- runtime
-- genre
-- year
-- description
-- cast
-- director and film director
-- book
-- music and lyrics
-- producers and executive producers
-- poster artwork
-- wide backdrop artwork
-- logo artwork
-- trailer target when exposed by the page
-
-BroadwayHD does not always expose a separate studio or production field, so the tool uses `BroadwayHD` as the provider/studio fallback for folder naming. Trailer downloading is best-effort and only saves a trailer file if the page exposes a direct public `.mp4`.
-
-### Netflix
-
-Netflix title pages are handled by:
-
-```text
-Provider Scripts/netflix.py
-```
-
-Supported links look like:
-
-```text
-https://www.netflix.com/title/82719754
-```
-
-The Netflix helper reads the public structured page data and looks for:
-
-- title
-- year
-- content rating
-- description
-- genres
-- tags
-- cast
-- starring list
-- directors
-- poster artwork
-- wide artwork
-- logo artwork
-- trailer target when exposed by the page
-
-The Netflix helper uses the public HTML shell, JSON-LD, and embedded app data instead of guessing from rendered text.
-
-### Metropolitan Opera Livestream
-
-Metropolitan Opera Livestream broadcast pages are handled by:
-
-```text
-Provider Scripts/metopera.py
-```
-
-Supported links look like:
-
-```text
-https://ondemand.metopera.org/broadcast/9ce1e692-36ed-464c-b06b-551d55dfff56
-```
-
-The provider reads the public Met Opera On Demand middleware data for the currently playing broadcast item and looks for:
-
-- title
-- performance date
-- runtime
-- composer
-- librettist
-- conductor
-- cast and roles
-- orchestra/chorus ensemble
-- short page description
-- full act-by-act synopsis from the Full Synopsis link
-- world premiere line from the synopsis page
-- current track when cue-point data is available
-- poster/wide artwork
-- Met Opera ID
-
-For Met livestream pages, the NFO writes the shorter Met page description to `<outline>` and writes the longer description plus full synopsis and world-premiere line to `<plot>`.
-
-## Separate Livestream Audio Tool
-
-Full livestream audio capture is handled by a separate standalone tool:
-
-```text
-/path/to/The Metropolitan Opera Livestream Getter by mp3li
-```
-
-Run it with:
-
-```bash
-cd "/path/to/The Metropolitan Opera Livestream Getter by mp3li"
-python3 the_metropolitan_opera_livestream_getter.py
-```
-
-That tool prompts for the Met broadcast page link, captures `master.m3u8` and `rendition.m3u8` from browser network traffic, saves the MP3, then writes its own Jellyfin-style `.nfo` and artwork in the same title folder.
-
-## What The Tool Does Not Do
-
-The tool does not:
-
-- save `.strm` files
-- write image URLs or trailer URLs into the `.nfo`
-- ask where to save output
-- save into your Jellyfin media folders directly
-- scrape private account data
-- bypass DRM
-
-Everything goes into the local `Output` folder first so you can inspect it before moving files into your media library.
-
-## Existing Output
-
-The current `Output` folder already uses the title-folder layout. For example:
-
-```text
-Output/Don Giovanni  ⁄  Mozart - Opera Ballet Vlaanderen 2025/
-Output/The Nutcracker  ⁄  Tchaikovsky - New National Theatre Tokyo 2025/
-Output/Shrek the Musical - Fox/
-Output/Merrily We Roll Along - Netflix/
-```
-
-Those folders can be copied or moved beside matching media files later if you want Jellyfin to pick them up next to local video files.
-
-## Troubleshooting
-
-If a page opens in your browser but the tool cannot get much data, the page may be filling important fields with JavaScript after load. The tool reads the HTML returned by the page request and then applies site-specific parsing where supported.
-
-If an embedded extra video does not appear as an `.mp4`, make sure `yt-dlp` is installed:
+Install it with:
 
 ```bash
 python3 -m pip install --user yt-dlp
 ```
 
-If artwork is missing, the page may not expose a usable image URL in the returned HTML.
+The tool does not save `.strm` files.
 
-If a site uses DRM or protected streaming for actual playable content, the tool should not try to download that protected content. It is intended for metadata, trailers, public images, galleries, and public extra videos.
+## Platform Notes
+
+This tool was developed on **macOS Tahoe** and browser testing during development was done in **Firefox**.
+
+The project also currently contains macOS-oriented assumptions, including:
+
+- macOS-style Google Chrome app path usage for browser-assisted flows
+- macOS `curl` fallback behavior during some download steps
+
+Because of that, macOS is the platform the tool is currently documented and prepared for.
+
+## Known Limitations
+
+- Only supported providers work.
+- Site changes can break a provider script until it is updated.
+- Trailer and extra-video download success depends on whether the provider exposes a real downloadable media URL.
+- The tool does not download DRM-protected trailers or other DRM-protected media.
+- Some provider pages expose incomplete metadata even when the visible page looks richer.
+- Media matching is intentionally careful. If the match is weak, the tool falls back to normal output instead of guessing aggressively.
+
+## Disclaimers
+
+This tool is provided for educational, research, and accessibility or accommodation support purposes only.
+
+It does not bypass DRM, does not obtain DRM-protected material, and does not access page information that requires a logged-in session when that information is not publicly visible to the tool.
+
+You are responsible for how you use this project, what material you process with it, and whether your use complies with the laws, licenses, and terms that apply to you. The author is not responsible for misuse.
+
+## Project Structure
+
+```text
+Launchers/
+  live_performance_metadata_and_extras_getter.py
+
+Base Script/
+  live_performance_metadata_and_extras_getter_base.py
+
+Provider Scripts/
+  amazon.py
+  broadwayhd.py
+  metopera.py
+  netflix.py
+  operavision.py
+
+Settings/
+  settings-default.json
+
+My Links Txt/
+  mylinks-default.txt
+```
+
+## Documentation Map
+
+- `README.md` - public overview, run instructions, settings explanation, and naming rules
+- `Launchers/live_performance_metadata_and_extras_getter.py` - launcher entry point
+- `Base Script/live_performance_metadata_and_extras_getter_base.py` - main tool logic
+- `Provider Scripts/` - provider-specific scraping logic
+- `Settings/settings-default.json` - tracked default settings
+- `My Links Txt/mylinks-default.txt` - tracked example import file

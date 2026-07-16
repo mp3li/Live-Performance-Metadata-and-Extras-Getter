@@ -1,5 +1,5 @@
 {
-  "_note": "To use this file, rename it to settings.json. These values match the tool's built-in defaults.",
+  "_note": "To use this file, remove -default from the file name so it becomes settings.json. These values match the tool's built-in defaults.",
   "output_dir": "Output",
   "downloads": {
     "images": true,
@@ -8,8 +8,8 @@
     "extra_videos": true,
     "trailers_folder": "trailers",
     "extras_folder": "extras",
-    "gallery_folder": "gallery",
-    "extra_videos_folder": "videos"
+    "gallery_folder": "extrafanart",
+    "extra_videos_folder": "extras"
   },
   "media_matching": {
     "enabled": false,

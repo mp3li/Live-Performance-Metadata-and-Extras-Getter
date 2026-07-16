@@ -1,0 +1,22 @@
+To use this file, remove -default from the file name so it becomes mylinks.txt.
+
+Blank text that is not a link will not be counted.
+Optional label text above a link is okay.
+The saved title still comes from the provider page itself.
+
+Example supported detail-page entries:
+
+Shrek the Musical / Amazon Prime Video:
+https://example.com/amazon-detail-page
+
+The Nutcracker / OperaVision:
+https://example.com/operavision-detail-page
+
+Madama Butterfly / Metropolitan Opera Livestream:
+https://example.com/metopera-broadcast-page
+
+Kinky Boots / BroadwayHD:
+https://example.com/broadwayhd-detail-page
+
+Merrily We Roll Along / Netflix:
+https://example.com/netflix-title-page

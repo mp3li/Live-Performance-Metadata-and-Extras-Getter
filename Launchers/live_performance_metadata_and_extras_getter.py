@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 BASE_SCRIPT_PATH = (
-    Path(__file__).resolve().parent
+    Path(__file__).resolve().parent.parent
     / "Base Script"
     / "live_performance_metadata_and_extras_getter_base.py"
 )
