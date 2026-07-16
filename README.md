@@ -5,13 +5,13 @@
 </p>
 
 <p align="center">
-  <img alt="Status" src="https://img.shields.io/badge/Status-In_Active_Development-118fe8?style=flat-square&labelColor=04040c" />
-  <img alt="Interface" src="https://img.shields.io/badge/Interface-Terminal-22c55e?style=flat-square&labelColor=04040c" />
-  <img alt="Metadata" src="https://img.shields.io/badge/Metadata-Jellyfin_Style_NFO-f97316?style=flat-square&labelColor=04040c" />
-  <img alt="Providers" src="https://img.shields.io/badge/Providers-Amazon_Prime_OperaVision_Metropolitan_Opera_BroadwayHD_%26_Netflix-8b5cf6?style=flat-square&labelColor=04040c" />
-  <img alt="Downloads" src="https://img.shields.io/badge/Downloads-Images%2C_Trailers%2C_Extras_%26_Metadata-ef4444?style=flat-square&labelColor=04040c" />
-  <img alt="Bulk Processing" src="https://img.shields.io/badge/Bulk_Processing-Optional-eab308?style=flat-square&labelColor=04040c" />
-  <img alt="Platform" src="https://img.shields.io/badge/Platform-macOS_Tahoe-64748b?style=flat-square&labelColor=04040c" />
+  <img alt="Status" src="https://img.shields.io/badge/Status-In_Active_Development-660000?style=flat-square&labelColor=04040c" />
+  <img alt="Interface" src="https://img.shields.io/badge/Interface-Terminal-660000?style=flat-square&labelColor=04040c" />
+  <img alt="Metadata" src="https://img.shields.io/badge/Metadata-Jellyfin_Style_NFO-660000?style=flat-square&labelColor=04040c" />
+  <img alt="Providers" src="https://img.shields.io/badge/Providers-Amazon_Prime_OperaVision_Metropolitan_Opera_BroadwayHD_%26_Netflix-660000?style=flat-square&labelColor=04040c" />
+  <img alt="Downloads" src="https://img.shields.io/badge/Downloads-Images%2C_Trailers%2C_Extras_%26_Metadata-660000?style=flat-square&labelColor=04040c" />
+  <img alt="Bulk Processing" src="https://img.shields.io/badge/Bulk_Processing-Optional-660000?style=flat-square&labelColor=04040c" />
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-macOS_Tahoe-660000?style=flat-square&labelColor=04040c" />
 </p>
 
 ## Table of Contents
@@ -26,6 +26,7 @@
 - [Supported Providers](#supported-providers)
 - [Requirements](#requirements)
 - [How to Run](#how-to-run)
+- [Optional Downloader Handoff](#optional-downloader-handoff)
 - [How to Use the Tool](#how-to-use-the-tool)
 - [Importing mylinks.txt](#importing-mylinkstxt)
 - [Settings](#settings)
@@ -119,6 +120,36 @@ By default, the tool saves output into:
 ```text
 Output
 ```
+
+## Optional Downloader Handoff
+
+This project remains fully standalone: the normal launcher command above starts
+the existing interactive workflow unchanged. On macOS, a compatible locally
+installed downloader extension can optionally call LPMAEG only after its own
+download, subtitle work, and cleanup have completed.
+
+That handoff supplies a supported **public detail-page link** and the folder
+containing the completed media. It never uses a stream or manifest URL. LPMAEG
+requires exactly one video directly in that folder, uses this project's normal
+local settings for NFO, artwork, trailer, and extras behavior, and skips rather
+than overwrites existing matching metadata or artwork.
+
+The extension normally generates this command for you. For an intentional
+manual handoff, run:
+
+```bash
+cd "/path/to/Live Performance Metadata and Extras Getter by mp3li"
+python3 "Launchers/live_performance_metadata_and_extras_getter.py" \
+  --handoff \
+  --detail-link "https://supported-provider.example/detail-page" \
+  --media-folder "/absolute/path/to/completed-download-folder" \
+  --skip-existing
+```
+
+Invalid or unsupported links, zero or multiple videos, and scrape failures
+return an error without changing the video. A generic downloader filename such
+as `master-...` may be renamed using LPMAEG's existing media naming behavior
+before matching sidecars are written.
 
 ## How to Use the Tool
 
