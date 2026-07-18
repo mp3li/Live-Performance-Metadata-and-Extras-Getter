@@ -8,6 +8,8 @@ documented in this file. The format follows
 
 ### Added
 
+- A MarqueeTV provider parser for public detail pages, including title, cast,
+  crew, artwork, trailer, and gallery extraction.
 - An explicit, non-interactive `--handoff` mode for a compatible local
   downloader extension on macOS.
 - `--detail-link`, `--media-folder`, and required `--skip-existing` handoff
@@ -22,6 +24,9 @@ documented in this file. The format follows
 - The existing generic `master-...` video rename behavior can now run before
   handoff sidecars are written, keeping NFO and artwork names aligned with the
   final video filename.
+- Generic rename detection now also covers random timestamped provider download
+  basenames, and MarqueeTV metadata now uses title-only bundle naming instead of
+  `Title - MarqueeTV`.
 
 ### Safety
 

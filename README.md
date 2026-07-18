@@ -8,7 +8,7 @@
   <img alt="Status" src="https://img.shields.io/badge/Status-In_Active_Development-660000?style=flat-square&labelColor=04040c" />
   <img alt="Interface" src="https://img.shields.io/badge/Interface-Terminal-660000?style=flat-square&labelColor=04040c" />
   <img alt="Metadata" src="https://img.shields.io/badge/Metadata-Jellyfin_Style_NFO-660000?style=flat-square&labelColor=04040c" />
-  <img alt="Providers" src="https://img.shields.io/badge/Providers-Amazon_Prime_OperaVision_Metropolitan_Opera_BroadwayHD_%26_Netflix-660000?style=flat-square&labelColor=04040c" />
+  <img alt="Providers" src="https://img.shields.io/badge/Providers-Amazon_Prime_OperaVision_Metropolitan_Opera_BroadwayHD_MarqueeTV_%26_Netflix-660000?style=flat-square&labelColor=04040c" />
   <img alt="Downloads" src="https://img.shields.io/badge/Downloads-Images%2C_Trailers%2C_Extras_%26_Metadata-660000?style=flat-square&labelColor=04040c" />
   <img alt="Bulk Processing" src="https://img.shields.io/badge/Bulk_Processing-Optional-660000?style=flat-square&labelColor=04040c" />
   <img alt="Platform" src="https://img.shields.io/badge/Platform-macOS_Tahoe-660000?style=flat-square&labelColor=04040c" />
@@ -24,6 +24,7 @@
 - [About the Project](#about-the-project)
 - [What the Tool Does](#what-the-tool-does)
 - [Supported Providers](#supported-providers)
+- [Provider Coverage](#provider-coverage)
 - [Requirements](#requirements)
 - [How to Run](#how-to-run)
 - [Optional Downloader Handoff](#optional-downloader-handoff)
@@ -69,7 +70,7 @@ It is meant for supported provider detail pages, not direct playable stream URLs
 - Downloads supported gallery images and extra videos when available.
 - Can import multiple links from a text file or accept manual one-by-one link entry.
 - Can optionally match existing media folders and save files beside the real media.
-- Can rename a generic downloader video filename, such as `master-...`, before writing matching metadata and artwork files.
+- Can rename a generic downloader video filename, such as `master-...` or a random timestamped provider basename, before writing matching metadata and artwork files.
 
 ## Supported Providers
 
@@ -77,14 +78,118 @@ The provider scripts currently documented for this tool are:
 
 - Amazon Prime Video detail pages
 - OperaVision performance pages
+- Metropolitan Opera livestream broadcast pages
 - BroadwayHD video pages
+- MarqueeTV video pages
 - Netflix title pages
+
+The tool only gets information that a provider's public detail page exposes in
+its HTML or in public page-linked data. If a field is not visible on the public
+page, requires an account-only response, or depends on DRM-protected playback,
+the tool does not invent it and does not pull it.
 
 Unsupported providers do not fall back to generic scraping. The tool prints:
 
 ```text
 Unfortunately this tool does not cover that provider at this time. Please make an Issue on Github for a Feature Request.
 ```
+
+## Provider Coverage
+
+What each provider currently pulls depends on what the public detail page for
+that title actually exposes. Some titles expose more than others.
+
+### Amazon Prime Video
+
+- title
+- production or studio
+- year and runtime
+- genre
+- directors
+- cast
+- producers or credits
+- content rating
+- plot
+- poster and wide artwork
+- direct public trailer when the page exposes one
+- provider source tracking, including the detail link and fetched source URL
+
+### OperaVision
+
+- title
+- composer
+- production or venue naming
+- stream, availability, and recorded dates when exposed
+- tagline
+- overview and story text in the plot field when exposed
+- cast and creative team with roles
+- production logo
+- poster and wide artwork
+- gallery images
+- extra videos
+- trailer or autoplay promo video when exposed as a direct file
+- provider source tracking, including the detail link and fetched source URL
+
+### Metropolitan Opera Livestream
+
+- title
+- composer
+- performance date
+- overview or short synopsis
+- full synopsis text when linked from the public page
+- world premiere when exposed on the linked synopsis page
+- cast and creative team with roles
+- runtime
+- orchestra, chorus, and production credits when exposed
+- poster and wide artwork
+- provider source tracking, including the detail link and fetched source URL
+
+### BroadwayHD
+
+- title
+- year and runtime
+- genre
+- description
+- cast
+- director and film director when exposed
+- book
+- music and lyrics
+- producers and executive producers
+- logo art
+- poster and wide artwork
+- direct public trailer when the page exposes one
+- provider source tracking, including the detail link and fetched source URL
+
+### MarqueeTV
+
+- title
+- year and runtime
+- genre
+- content rating
+- original language
+- description
+- cast with roles
+- director
+- additional crew fields currently captured from the public page, such as
+  costume design and composer
+- poster and wide artwork
+- gallery images
+- direct public trailer when the page exposes one
+- provider source tracking, including the detail link and fetched source URL
+
+### Netflix
+
+- title
+- year and runtime
+- content rating
+- genres
+- descriptive tags from the public page, such as "This show is ..."
+- cast
+- starring line saved separately when exposed
+- plot
+- poster and wide artwork
+- direct public trailer when the page exposes one
+- provider source tracking, including the detail link and fetched source URL
 
 ## Requirements
 

@@ -66,6 +66,7 @@ operavision = load_provider_script("operavision")
 metopera = load_provider_script("metopera")
 broadwayhd = load_provider_script("broadwayhd")
 netflix = load_provider_script("netflix")
+marqueetv = load_provider_script("marqueetv")
 
 PROVIDER_HANDLERS = (
     ("amazon", amazon.NAME, amazon.is_amazon_url),
@@ -73,6 +74,7 @@ PROVIDER_HANDLERS = (
     ("metopera", metopera.NAME, metopera.is_supported_url),
     ("broadwayhd", broadwayhd.NAME, broadwayhd.is_supported_url),
     ("netflix", netflix.NAME, netflix.is_supported_url),
+    ("marqueetv", marqueetv.NAME, marqueetv.is_supported_url),
 )
 
 
@@ -1197,6 +1199,44 @@ def metadata_from_netflix(url: str, detail_link: str = "") -> Metadata:
     return meta
 
 
+def metadata_from_marqueetv(url: str, detail_link: str = "") -> Metadata:
+    item = marqueetv.extract_metadata(url, timeout=HTTP_TIMEOUT_SECONDS)
+    meta = Metadata(source_url=item.source_url or url, detail_link=detail_link or url)
+    meta.source_site = marqueetv.NAME
+    meta.title = item.title
+    meta.folder_name_override = item.title
+    meta.outline = item.outline
+    meta.plot = item.plot
+    meta.year = item.year
+    meta.runtime_minutes = item.runtime_minutes
+    meta.content_rating = item.content_rating
+    meta.language = item.language
+    meta.studios = [marqueetv.STUDIO_NAME]
+    meta.production_label = "Production/Studio"
+    meta.poster_url = item.poster_url
+    meta.fanart_url = item.wide_url
+    meta.trailer_url = item.trailer_url
+    meta.genres = item.genres
+    meta.tags = item.tags
+    meta.directors = item.directors
+    meta.actors = [Actor(name=actor.name, role=actor.role) for actor in item.cast]
+    meta.gallery_urls = item.gallery_urls
+
+    if item.slug:
+        meta.add_unique_id("marqueetv", item.slug)
+    if item.upload_date:
+        meta.add_extra("Upload Date", item.upload_date)
+    if item.expires:
+        meta.add_extra("Available Until", item.expires)
+    if item.costume_designers:
+        meta.add_extra("Costume Design", join_list(item.costume_designers))
+    if item.composers:
+        meta.add_extra("Composer", join_list(item.composers))
+
+    clean_final_metadata(meta)
+    return meta
+
+
 def build_metopera_plot(opera: metopera.MetOperaMetadata) -> str:
     pieces: list[str] = []
     short_description = opera.plot or opera.brief_synopsis
@@ -2014,6 +2054,7 @@ def is_generic_download_stem(stem: str) -> bool:
     patterns = (
         r"^master-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
         r"(?:_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})?$",
+        r"^[A-Za-z0-9]{8,16}_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$",
     )
     return any(re.fullmatch(pattern, value, flags=re.IGNORECASE) for pattern in patterns)
 
@@ -2892,9 +2933,9 @@ def save_handoff_metadata(
         print(f"LPMAEG note: Existing metadata or artwork found; skipped: {naming.nfo_filename}")
         return None
 
-    with AnimatedStatus("LPMAEG: Creating metadata and downloading available extras"):
-        items = download_assets_for_metadata(meta, media_folder, naming, settings)
-        nfo_path = write_nfo(meta, media_folder, naming.nfo_filename)
+    print("Live Performance Metadata and Extras Getter: Creating metadata and downloading available extras...")
+    items = download_assets_for_metadata(meta, media_folder, naming, settings)
+    nfo_path = write_nfo(meta, media_folder, naming.nfo_filename)
     return SaveResult(folder=media_folder, items=[nfo_path, *items])
 
 
@@ -3033,6 +3074,8 @@ def scrape_url(url: str) -> Metadata:
         return metadata_from_broadwayhd(normalized, detail_link=url)
     if provider == "netflix":
         return metadata_from_netflix(normalized, detail_link=url)
+    if provider == "marqueetv":
+        return metadata_from_marqueetv(normalized, detail_link=url)
 
     html_text, final_url, warnings = fetch_html(normalized)
     meta = parse_detail_page(html_text, final_url, detail_link=url)
