@@ -10,6 +10,9 @@ documented in this file. The format follows
 
 - A MarqueeTV provider parser for public detail pages, including title, cast,
   crew, artwork, trailer, and gallery extraction.
+- A Disney+ provider parser for public browse entity pages, including title,
+  descriptions, rating, runtime, genres, director, cast, and artwork
+  extraction.
 - An explicit, non-interactive `--handoff` mode for a compatible local
   downloader extension on macOS.
 - `--detail-link`, `--media-folder`, and required `--skip-existing` handoff

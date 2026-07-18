@@ -66,6 +66,7 @@ operavision = load_provider_script("operavision")
 metopera = load_provider_script("metopera")
 broadwayhd = load_provider_script("broadwayhd")
 netflix = load_provider_script("netflix")
+disneyplus = load_provider_script("disneyplus")
 marqueetv = load_provider_script("marqueetv")
 
 PROVIDER_HANDLERS = (
@@ -74,6 +75,7 @@ PROVIDER_HANDLERS = (
     ("metopera", metopera.NAME, metopera.is_supported_url),
     ("broadwayhd", broadwayhd.NAME, broadwayhd.is_supported_url),
     ("netflix", netflix.NAME, netflix.is_supported_url),
+    ("disneyplus", disneyplus.NAME, disneyplus.is_supported_url),
     ("marqueetv", marqueetv.NAME, marqueetv.is_supported_url),
 )
 
@@ -625,6 +627,7 @@ def should_keep_unmapped_visible_field(meta: Metadata, label: str, value: str) -
 def looks_like_image_url(url: str) -> bool:
     parsed = urllib.parse.urlparse(clean_text(url))
     path = parsed.path.casefold()
+    query = parsed.query.casefold()
     if not path:
         return False
     if any(path.endswith(ext) for ext in (".woff", ".woff2", ".css", ".js")):
@@ -633,6 +636,7 @@ def looks_like_image_url(url: str) -> bool:
         re.search(r"\.(?:jpg|jpeg|png|webp)(?:$|[._-])", path)
         or "_fmjpg_" in path
         or "_fmpng_" in path
+        or re.search(r"(?:^|[&?])format=(?:jpg|jpeg|png|webp)(?:$|[&])", query)
     )
 
 
@@ -1194,6 +1198,37 @@ def metadata_from_netflix(url: str, detail_link: str = "") -> Metadata:
         meta.add_extra("Netflix Title ID", nfx.item_id)
     if nfx.starring:
         meta.add_extra("Starring", join_list(nfx.starring))
+
+    clean_final_metadata(meta)
+    return meta
+
+
+def metadata_from_disneyplus(url: str, detail_link: str = "") -> Metadata:
+    item = disneyplus.extract_metadata(url, timeout=HTTP_TIMEOUT_SECONDS)
+    meta = Metadata(source_url=item.source_url or url, detail_link=detail_link or url)
+    meta.source_site = disneyplus.NAME
+    meta.title = item.title
+    meta.folder_name_override = item.title
+    meta.outline = item.short_description or item.long_description
+    meta.plot = item.long_description or item.short_description
+    meta.year = item.year
+    meta.runtime_minutes = item.runtime_minutes
+    meta.content_rating = item.content_rating
+    meta.studios = [disneyplus.STUDIO_NAME]
+    meta.production_label = "Provider"
+    meta.poster_url = item.poster_url
+    meta.fanart_url = item.wide_url
+    meta.logo_url = item.logo_url
+    meta.trailer_url = item.trailer_url
+    meta.genres = item.genres
+    meta.directors = item.directors
+    meta.actors = [Actor(name=name) for name in item.cast]
+
+    if item.entity_id:
+        meta.add_unique_id("disneyplus", item.entity_id)
+        meta.add_extra("Disney+ Entity ID", item.entity_id)
+    if item.category:
+        meta.add_extra("Category", item.category)
 
     clean_final_metadata(meta)
     return meta
@@ -3074,6 +3109,8 @@ def scrape_url(url: str) -> Metadata:
         return metadata_from_broadwayhd(normalized, detail_link=url)
     if provider == "netflix":
         return metadata_from_netflix(normalized, detail_link=url)
+    if provider == "disneyplus":
+        return metadata_from_disneyplus(normalized, detail_link=url)
     if provider == "marqueetv":
         return metadata_from_marqueetv(normalized, detail_link=url)
 

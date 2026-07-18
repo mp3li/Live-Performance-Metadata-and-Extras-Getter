@@ -8,7 +8,7 @@
   <img alt="Status" src="https://img.shields.io/badge/Status-In_Active_Development-660000?style=flat-square&labelColor=04040c" />
   <img alt="Interface" src="https://img.shields.io/badge/Interface-Terminal-660000?style=flat-square&labelColor=04040c" />
   <img alt="Metadata" src="https://img.shields.io/badge/Metadata-Jellyfin_Style_NFO-660000?style=flat-square&labelColor=04040c" />
-  <img alt="Providers" src="https://img.shields.io/badge/Providers-Amazon_Prime_OperaVision_Metropolitan_Opera_BroadwayHD_MarqueeTV_%26_Netflix-660000?style=flat-square&labelColor=04040c" />
+  <img alt="Providers" src="https://img.shields.io/badge/Providers-Amazon_Prime_OperaVision_Metropolitan_Opera_BroadwayHD_MarqueeTV_Disney%2B_%26_Netflix-660000?style=flat-square&labelColor=04040c" />
   <img alt="Downloads" src="https://img.shields.io/badge/Downloads-Images%2C_Trailers%2C_Extras_%26_Metadata-660000?style=flat-square&labelColor=04040c" />
   <img alt="Bulk Processing" src="https://img.shields.io/badge/Bulk_Processing-Optional-660000?style=flat-square&labelColor=04040c" />
   <img alt="Platform" src="https://img.shields.io/badge/Platform-macOS_Tahoe-660000?style=flat-square&labelColor=04040c" />
@@ -81,6 +81,7 @@ The provider scripts currently documented for this tool are:
 - Metropolitan Opera livestream broadcast pages
 - BroadwayHD video pages
 - MarqueeTV video pages
+- Disney+ browse entity pages
 - Netflix title pages
 
 The tool only gets information that a provider's public detail page exposes in
@@ -175,6 +176,20 @@ that title actually exposes. Some titles expose more than others.
 - poster and wide artwork
 - gallery images
 - direct public trailer when the page exposes one
+- provider source tracking, including the detail link and fetched source URL
+
+### Disney+
+
+- title
+- short description and longer description
+- year and runtime
+- content rating
+- genres
+- director
+- cast
+- category when exposed on the public page
+- logo art
+- poster and wide artwork
 - provider source tracking, including the detail link and fetched source URL
 
 ### Netflix
